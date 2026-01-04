@@ -1,169 +1,188 @@
 # Delta CI
 
-**Delta CI** is an AI-native, diff-aware continuous integration system.
+**Delta CI** is an open-source, **diff-aware, AI-assisted continuous integration system** designed to reduce wasted compute, improve feedback quality, and make CI behavior explainable.
 
-Instead of running everything on every change, Delta CI understands **what changed**, decides **what needs to run**, and helps you **fix failures**, not just report them.
-
-> CI driven by deltas, not by fear.
+Delta CI does not ask “what pipeline should I run?”  
+It asks **“what actually changed, and what really needs to run?”**
 
 ---
 
 ## Why Delta CI?
 
-Traditional CI systems are:
-- static (same pipeline for every change)
-- noisy (run all tests, all the time)
-- passive (fail → read logs → fix manually)
+Traditional CI systems:
+- run the same static pipelines on every change
+- waste compute on unaffected code paths
+- produce noisy, slow feedback
+- treat failures as logs to read, not problems to understand
 
-Delta CI is built around three ideas:
-
-1. **Diff-aware execution**  
-   Run only what is impacted by the change.
-
-2. **AI-assisted understanding**  
-   Explain *why* a job failed and *what to do next*.
-
-3. **Minimal contracts, strong defaults**  
-   Works out of the box, but lets teams take control when needed.
+Delta CI takes a different approach.
 
 ---
 
-## Core Concepts
+## Core Ideas
 
-### 1. Diff-Aware Planning
-Delta CI analyzes:
+### 🔹 Diff-Aware by Design
+Jobs are selected based on:
 - changed files
-- project structure
-- detected tech stack(s)
-- previous successful build recipes
+- project boundaries
+- dependency impact
 
-Based on that, it generates a **run plan** instead of blindly executing a static pipeline.
-
-Example:
-- docs-only change → no build
-- backend change → unit tests only
-- shared library change → downstream services
+Not every change needs a full rebuild.
 
 ---
 
-### 2. AI-Assisted Failure Analysis
-When something fails, Delta CI:
-- collects logs and artifacts
-- detects the likely root cause
-- explains the failure in human terms
-- optionally suggests a fix or a patch
+### 🔹 Deterministic Orchestration
+- explicit state machines
+- lease-based execution fencing
+- idempotent, recoverable behavior
 
-AI **never blindly deploys or mutates your code** — fixes are always validated and require human approval.
+Correctness first. Always.
 
 ---
 
-### 3. Ephemeral & Secure Execution
-- Each job runs in a short-lived sandbox
-- No long-lived secrets in runners
-- Fork PRs run with zero trust by default
-- OIDC-based access to cloud providers
+### 🔹 Control Plane / Data Plane Split
+- **Control Plane** decides and tracks state
+- **Data Plane** executes untrusted code
+
+This enables:
+- strong security boundaries
+- predictable recovery
+- scalable execution
 
 ---
 
-## Architecture Overview
+### 🔹 AI as an Assistant (Not an Authority)
+AI is used to:
+- explain failures
+- assist discovery
+- help humans understand what happened
 
-Delta CI follows a **control plane / data plane** design:
+AI never:
+- applies changes automatically
+- deploys code
+- bypasses policies
 
-- **Control Plane**
-  - API & Web UI
-  - Orchestrator
-  - Planner (rules + AI)
-  - Failure Analyzer
-  - State & metadata
-
-- **Data Plane**
-  - Ephemeral runners
-  - Isolated execution
-  - Artifact & cache storage
-
-This separation keeps execution scalable, secure, and observable.
+Human-in-the-loop is mandatory.
 
 ---
 
-## How It Works (High Level)
+## What Delta CI Is (and Is Not)
 
-1. Git provider sends a webhook (PR / push)
-2. Delta CI creates a run and analyzes the diff
-3. A plan is generated (what to run and why)
-4. Jobs are executed by ephemeral runners
-5. Results and artifacts are collected
-6. Status and explanations are reported back to the PR
+### Delta CI **is**
+- open source
+- self-host friendly
+- conservative by design
+- explainable and auditable
+- suitable for monorepos
+
+### Delta CI **is not**
+- a deployment or CD system
+- an autonomous AI agent
+- a replacement for build tools
+- a YAML-first pipeline DSL
 
 ---
 
-## Repository Structure (planned)
-
-```text
-delta-ci/
-├─ control-plane/
-│  ├─ api/
-│  ├─ orchestrator/
-│  ├─ planner/
-│  └─ failure-analyzer/
-├─ runner/
-│  ├─ agent/
-│  └─ images/
-├─ web/
-├─ docs/
-├─ examples/
-└─ README.md
+## High-Level Architecture
+```
+     +--------------------+
+     |    Control Plane   |
+     |--------------------|
+     | API / Orchestrator |
+     | Planner            |
+     | State Machines     |
+     | Failure Analysis   |
+     +----------+---------+
+                |
+     lease / heartbeat / complete
+                |
+     +----------v---------+
+     |     Data Plane     |
+     |--------------------|
+     | Ephemeral Runners  |
+     | Isolated Execution |
+     | Logs & Artifacts   |
+     +--------------------+
 ```
 
-## Configuration Philosophy
-
-Delta CI prefers **convention over configuration**.
-
-If needed, projects can define an explicit contract:
-```yaml
-# ci.ai.yaml
-version: 1
-
-jobs:
-  build:
-    image: dotnet:9.0
-    steps:
-      - dotnet restore
-      - dotnet build -c Release
-      - dotnet test -c Release
-```
-
-If no config exists, Delta CI attempts safe auto-detection and proposes a working recipe.
-
-## What Delta CI Is Not
-	•	❌ Not a replacement for every CI feature on day one
-	•	❌ Not a YAML-heavy pipeline generator
-	•	❌ Not an autonomous deployment bot
-
-Delta CI focuses on build correctness, signal quality, and developer feedback loops.
+---
 
 ## Project Status
-🚧 Early development / design-driven stage
 
-The project is currently:
-	•	stabilizing core architecture
-	•	defining execution and runner protocols
-	•	implementing a minimal working CI loop
-	•	dogfooding on itself
+🚧 **Early / Design-Driven Phase**
 
-APIs and internals will change.
+- architecture and protocols are defined
+- documentation is treated as a first-class artifact
+- implementation is starting with dogfooding in mind
 
-## Roadmap (Short Term)
-	•	GitHub integration (checks + PR comments)
-	•	Diff-aware planner MVP
-	•	Ephemeral runner protocol (lease / heartbeat)
-	•	Artifact & log storage
-	•	AI failure explanation (read-only)
-	•	Self-hosted deployment docs
+If something is undocumented, it should be considered undefined.
+
+---
+
+## Documentation
+
+Full documentation lives in `docs/`:
+
+- architecture and protocols
+- design principles
+- operations and recovery
+- reference contracts
+- ADRs (Architectural Decision Records)
+
+Start here:
+```
+docs/README.md
+```
+
+---
+
+## Technology Stack (Summary)
+
+- Go (control plane and runners)
+- PostgreSQL (authoritative state)
+- at-least-once queue (Postgres / Redis)
+- S3-compatible artifact storage
+- HTTP + JSON APIs
+- Prometheus + OpenTelemetry
+
+See:
+```
+docs/architecture/technology-stack.md
+docs/adr/ADR-0006-technology-stack.md
+```
+
+---
+
+## Contributing
+
+Delta CI values:
+- correctness over cleverness
+- explicit design over implicit behavior
+- documentation before implementation
+
+Before contributing:
+- read the architecture docs
+- check existing ADRs
+- document design changes
+
+A `CONTRIBUTING.md` will follow.
+
+---
+
+## License
+
+Delta CI is licensed under the **Apache License 2.0**.
+
+---
 
 ## Philosophy
 
-> CI should help you merge with confidence,
-> not punish you for touching code.
+> CI should scale with understanding, not just with hardware.
 
-Delta CI exists to reduce wasted compute, noisy feedback,
-and slow developer loops — without hiding complexity when it matters.
+Delta CI exists to make CI:
+- faster
+- quieter
+- safer
+- easier to reason about
+
+If that resonates with you — welcome.

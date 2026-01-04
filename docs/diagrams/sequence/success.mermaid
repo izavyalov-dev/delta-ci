@@ -1,0 +1,56 @@
+sequenceDiagram
+  autonumber
+  participant Dev as Developer (UI/CLI)
+  participant VCS as GitHub/GitLab
+  participant API as API Gateway/BFF
+  participant ORCH as Orchestrator (Pipeline Engine)
+  participant PLAN as Planner (Rules + AI Plan)
+  participant DB as Postgres
+  participant Q as Queue
+  participant RUNCTL as Runner Controller
+  participant R as Ephemeral Runner
+  participant OBJ as Artifact Store
+  participant STATUS as Status Reporter
+
+  rect rgb(235,245,255)
+    Note over VCS,API: 1) PR event triggers pipeline run
+    VCS->>API: webhook PR opened/synchronize
+    API->>ORCH: CreateRun(repo, pr, commitSHA)
+    ORCH->>DB: INSERT Run(status=PLANNING)
+    ORCH->>STATUS: Set check "mini-ci" = in_progress
+    STATUS->>VCS: create/update CheckRun
+  end
+
+  rect rgb(235,255,240)
+    Note over ORCH,PLAN: 2) Planning: decide what to run
+    ORCH->>PLAN: Plan(runId, diffSummary, repoMeta)
+    PLAN->>VCS: fetch diff/changed files (API)
+    PLAN->>DB: Read repo recipe (if exists)
+    PLAN-->>ORCH: PlanResult(jobs[], caches, artifacts)
+    ORCH->>DB: INSERT Jobs + UPDATE Run(status=RUNNING)
+  end
+
+  rect rgb(255,250,235)
+    Note over ORCH,RUNCTL: 3) Enqueue and execute
+    ORCH->>Q: publish JobRequested(jobId x N)
+    ORCH->>RUNCTL: EnsureCapacity(runId, N)
+    RUNCTL->>RUNCTL: schedule pods/VMs (async)
+    RUNCTL-->>R: start runner instance(s)
+
+    loop For each job
+      R->>Q: lease job (jobId)
+      Q-->>R: JobSpec (image, steps, env refs)
+      R->>VCS: clone/fetch commitSHA
+      R->>R: restore deps/build (use cache if any)
+      R->>OBJ: stream logs + upload artifacts (junit, coverage)
+      R-->>ORCH: JobResult(success/fail, pointers)
+      ORCH->>DB: UPDATE Job(status, timings, artifactRefs)
+    end
+  end
+
+  rect rgb(235,245,255)
+    Note over ORCH,STATUS: 4) Finalize run + report status
+    ORCH->>DB: UPDATE Run(status=SUCCESS/FAILED)
+    ORCH->>STATUS: Update checks with conclusion + summary
+    STATUS->>VCS: finalize CheckRun (success/failure)
+  end

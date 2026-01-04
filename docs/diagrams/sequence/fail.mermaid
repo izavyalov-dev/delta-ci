@@ -1,0 +1,65 @@
+sequenceDiagram
+  autonumber
+  participant VCS as GitHub/GitLab
+  participant API as API Gateway/BFF
+  participant ORCH as Orchestrator
+  participant DB as Postgres
+  participant OBJ as Artifact Store
+  participant FAIL as Failure Analyzer (AI Explain/Fix)
+  participant LLM as LLM Provider
+  participant Q as Queue
+  participant RUNCTL as Runner Controller
+  participant R as Ephemeral Runner
+  participant STATUS as Status Reporter
+
+  rect rgb(255,240,240)
+    Note over ORCH,FAIL: 1) A job fails → explain
+    R-->>ORCH: JobResult(fail, logRefs)
+    ORCH->>DB: UPDATE Job=FAILED
+    ORCH->>FAIL: AnalyzeFailure(runId, jobId)
+    FAIL->>OBJ: fetch log tail + artifacts (junit/trx)
+    FAIL->>DB: fetch job spec + repo recipe
+    FAIL->>LLM: Explain(logTail, context, constraints)
+    LLM-->>FAIL: RootCause + SuggestedFixes
+    FAIL->>STATUS: Post comment + summary (optional)
+    STATUS->>VCS: PR comment / check annotations
+  end
+
+  rect rgb(240,255,240)
+    Note over FAIL,R: 2) Optional: generate patch and validate
+    alt Fix is safe & allowed
+      FAIL->>LLM: GeneratePatch(diff, files, error, policy)
+      LLM-->>FAIL: Patch (unified diff)
+      FAIL->>ORCH: RequestFixValidation(runId, patch)
+      ORCH->>DB: Create Job "validate-fix"
+      ORCH->>Q: publish JobRequested(validate-fix)
+      ORCH->>RUNCTL: EnsureCapacity(1)
+      RUNCTL-->>R: start runner
+      R->>Q: lease validate-fix
+      Q-->>R: JobSpec + patch payload
+      R->>VCS: clone commitSHA
+      R->>R: apply patch
+      R->>R: run targeted tests/build
+      R->>OBJ: upload logs
+      R-->>ORCH: JobResult(success/fail)
+      ORCH->>DB: UPDATE validate-fix result
+      alt validation success
+        FAIL->>STATUS: Offer "Apply patch" (or open PR)
+        STATUS->>VCS: PR comment with patch link/instructions
+      else validation fails
+        FAIL->>STATUS: Explain why fix didn't work + next actions
+        STATUS->>VCS: PR comment / check update
+      end
+    else Not allowed or too risky
+      FAIL->>STATUS: Provide explanation + manual steps
+      STATUS->>VCS: PR comment
+    end
+  end
+
+  rect rgb(235,245,255)
+    Note over API,ORCH: 3) Human-in-the-loop rerun controls
+    VCS->>API: comment "/ci rerun unit-tests"
+    API->>ORCH: Rerun(runId, jobSelector)
+    ORCH->>DB: create new Run (or new attempt)
+    ORCH->>Q: enqueue selected jobs
+  end

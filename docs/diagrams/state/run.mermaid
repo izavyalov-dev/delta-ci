@@ -1,0 +1,31 @@
+stateDiagram-v2
+  direction LR
+
+  [*] --> CREATED: CreateRun(webhook/manual)
+  CREATED --> DEDUPED: idempotency check OK
+  CREATED --> IGNORED: duplicate / filtered
+  IGNORED --> [*]
+
+  DEDUPED --> PLANNING: persist run + start planning
+  PLANNING --> PLAN_FAILED: planner error/timeout
+  PLANNING --> WAITING_CAPACITY: jobs created
+
+  WAITING_CAPACITY --> RUNNING: first job leased
+  WAITING_CAPACITY --> CANCELED: user cancel / superseded
+
+  RUNNING --> RUNNING: job results streaming
+  RUNNING --> PARTIAL_SUCCESS: allow_failures present
+  RUNNING --> FAILED: any required job failed
+  RUNNING --> SUCCESS: all required jobs succeeded
+  RUNNING --> CANCELED: cancel requested
+  RUNNING --> TIMEOUT: max runtime exceeded
+
+  PLAN_FAILED --> FAILED
+  TIMEOUT --> FAILED
+  PARTIAL_SUCCESS --> SUCCESS: all required jobs ok
+
+  SUCCESS --> REPORTED: checks finalized
+  FAILED --> REPORTED: checks finalized
+  CANCELED --> REPORTED: checks finalized
+
+  REPORTED --> [*]

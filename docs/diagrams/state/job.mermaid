@@ -1,0 +1,38 @@
+stateDiagram-v2
+  direction LR
+
+  [*] --> QUEUED: created by planner
+
+  QUEUED --> DISPATCHING: runner requested / capacity pending
+  DISPATCHING --> LEASED: runner leased job (lease TTL starts)
+
+  LEASED --> STARTING: runner preparing env
+  STARTING --> RUNNING: steps executing
+
+  RUNNING --> UPLOADING: artifacts/logs upload
+  UPLOADING --> SUCCEEDED: exit 0
+  UPLOADING --> FAILED: non-zero / test failures
+
+  %% Retry paths (controlled)
+  FAILED --> RETRY_WAIT: retryable + attempts left
+  RETRY_WAIT --> QUEUED: backoff elapsed
+
+  %% Lease failure / runner crash
+  LEASED --> QUEUED: lease expired (runner died)
+
+  %% Cancellation paths
+  QUEUED --> CANCELED: cancel run
+  DISPATCHING --> CANCELED: cancel run
+  LEASED --> CANCEL_REQUESTED: cancel run
+  STARTING --> CANCEL_REQUESTED: cancel run
+  RUNNING --> CANCEL_REQUESTED: cancel run
+  CANCEL_REQUESTED --> CANCELED: runner ack cancel
+
+  %% Timeouts
+  RUNNING --> TIMED_OUT: step/job timeout
+  TIMED_OUT --> RETRY_WAIT: retryable + attempts left
+  TIMED_OUT --> FAILED: non-retryable or no attempts left
+
+  SUCCEEDED --> [*]
+  FAILED --> [*]
+  CANCELED --> [*]

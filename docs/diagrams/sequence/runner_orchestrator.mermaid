@@ -1,0 +1,40 @@
+sequenceDiagram
+  autonumber
+  participant ORCH as Orchestrator
+  participant Q as Queue (jobs)
+  participant CQ as Queue (control)
+  participant R as Runner
+
+  Note over ORCH,Q: Job already enqueued: JobRequested(jobId)
+
+  rect rgb(240,255,240)
+    Note over R,Q: 1) Lease job (pull)
+    R->>Q: LeaseNext(runnerId, capabilities)
+    Q-->>R: JobLease(jobId, leaseId, leaseTtl, specRef)
+    R->>ORCH: AckLease(jobId, leaseId, runnerId, ttl)
+    ORCH-->>R: LeaseAccepted(heartbeatInterval, maxRuntime, cancelToken)
+  end
+
+  rect rgb(235,245,255)
+    Note over R,ORCH: 2) Heartbeat loop
+    loop every heartbeatInterval
+      R->>ORCH: Heartbeat(leaseId, progress%, lastStep, logCursor)
+      ORCH-->>R: HeartbeatAck(extendLease=true, cancelRequested=false)
+    end
+  end
+
+  rect rgb(255,250,235)
+    Note over R,ORCH: 3) Complete
+    R->>ORCH: Complete(leaseId, status, exitCode, artifactRefs, summary)
+    ORCH-->>R: CompleteAck()
+    R->>Q: Ack(jobId) / Finalize message
+  end
+
+  rect rgb(255,240,240)
+    Note over ORCH,CQ: 4) Cancel flow (asynchronous)
+    ORCH->>CQ: Publish CancelRequested(leaseId or jobId)
+    R->>CQ: Subscribe/Receive CancelRequested
+    R->>R: Graceful stop (SIGTERM, cleanup, upload partial logs)
+    R->>ORCH: CancelAck(leaseId, reason, finalArtifacts?)
+    ORCH-->>R: CancelFinalized()
+  end
