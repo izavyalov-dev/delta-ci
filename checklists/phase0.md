@@ -55,15 +55,15 @@ docs/
 
 ## Milestone 0.2 — Core Data Model
 
-☐ Define DB schema for:
+☑ Define DB schema for:
 - runs
 - jobs
 - job attempts
 - leases
 
-☐ Implement migrations  
-☐ Enforce state machine constraints in code  
-☐ Prevent illegal transitions at persistence layer  
+☑ Implement migrations  
+☑ Enforce state machine constraints in code  
+☑ Prevent illegal transitions at persistence layer  
 
 Success criteria:
 - invalid transitions fail explicitly
