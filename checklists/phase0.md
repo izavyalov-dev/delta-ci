@@ -33,10 +33,10 @@ Performance, scale, and AI are explicitly secondary.
 
 ## Milestone 0.1 — Repository Skeleton
 
-☐ Create repository structure  
-☐ Set up Go module  
-☐ Add root README.md  
-☐ Add `docs/` with committed architecture  
+☑ Create repository structure  
+☑ Set up Go module  
+☑ Add root README.md  
+☑ Add `docs/` with committed architecture  
 
 Recommended structure:
 ```
