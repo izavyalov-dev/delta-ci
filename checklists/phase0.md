@@ -73,11 +73,11 @@ Success criteria:
 
 ## Milestone 0.3 — Orchestrator Skeleton
 
-☐ API to create a run  
-☐ Create run → planning → job creation  
-☐ Enqueue job attempt  
-☐ Track job and lease state  
-☐ Expose read-only run/job APIs  
+☑ API to create a run  
+☑ Create run → planning → job creation  
+☑ Enqueue job attempt  
+☑ Track job and lease state  
+☑ Expose read-only run/job APIs  
 
 Ignore:
 - retries
