@@ -300,3 +300,55 @@ WHERE id = $1
 `, attemptID, completed)
 	return err
 }
+
+// RecordArtifacts persists artifact references for a job attempt.
+func (s *Store) RecordArtifacts(ctx context.Context, attemptID string, refs []ArtifactRef) error {
+	if attemptID == "" {
+		return errors.New("attempt id required")
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		for _, ref := range refs {
+			if ref.Type == "" || ref.URI == "" {
+				return errors.New("artifact refs require type and uri")
+			}
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO job_artifacts (job_attempt_id, artifact_type, uri)
+VALUES ($1, $2, $3)
+ON CONFLICT (job_attempt_id, uri) DO NOTHING
+`, attemptID, ref.Type, ref.URI); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ListArtifactsByJob returns all artifact references for a job across attempts.
+func (s *Store) ListArtifactsByJob(ctx context.Context, jobID string) ([]Artifact, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT a.id, a.job_attempt_id, a.artifact_type, a.uri, a.created_at
+FROM job_artifacts a
+JOIN job_attempts ja ON ja.id = a.job_attempt_id
+WHERE ja.job_id = $1
+ORDER BY a.created_at ASC, a.id ASC
+`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var artifacts []Artifact
+	for rows.Next() {
+		var artifact Artifact
+		if err := rows.Scan(&artifact.ID, &artifact.JobAttemptID, &artifact.Type, &artifact.URI, &artifact.CreatedAt); err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, artifact)
+	}
+
+	return artifacts, rows.Err()
+}

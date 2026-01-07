@@ -53,3 +53,18 @@ type Lease struct {
 	ExpiresAt                *time.Time `json:"expires_at,omitempty"`
 	CompletedAt              *time.Time `json:"completed_at,omitempty"`
 }
+
+// ArtifactRef is a lightweight reference to an external artifact.
+type ArtifactRef struct {
+	Type string `json:"type"`
+	URI  string `json:"uri"`
+}
+
+// Artifact represents a stored artifact reference for a job attempt.
+type Artifact struct {
+	ID           int64     `json:"id"`
+	JobAttemptID string    `json:"job_attempt_id"`
+	Type         string    `json:"type"`
+	URI          string    `json:"uri"`
+	CreatedAt    time.Time `json:"created_at"`
+}

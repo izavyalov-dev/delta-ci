@@ -15,6 +15,7 @@ The Data Plane is responsible for:
 - providing isolated execution environments
 - producing logs and artifacts
 - reporting execution results via the runner protocol
+- reporting artifact references (URIs) to the control plane
 - enforcing execution limits (time, resources)
 
 The Data Plane does **not**:

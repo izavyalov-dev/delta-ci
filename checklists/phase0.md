@@ -130,10 +130,10 @@ Validation:
 
 ## Milestone 0.7 — Artifact Storage
 
-☐ S3-compatible storage integration  
-☐ Upload logs  
-☐ Store artifact references  
-☐ Do not store logs in DB  
+☑ S3-compatible storage integration  
+☑ Upload logs  
+☑ Store artifact references  
+☑ Do not store logs in DB  
 
 Failure mode:
 - artifact upload failure must not corrupt state

@@ -163,9 +163,15 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 			return RunDetails{}, err
 		}
 
+		artifacts, err := s.store.ListArtifactsByJob(ctx, job.ID)
+		if err != nil {
+			return RunDetails{}, err
+		}
+
 		jobDetails = append(jobDetails, JobDetail{
-			Job:      job,
-			Attempts: attempts,
+			Job:       job,
+			Attempts:  attempts,
+			Artifacts: artifacts,
 		})
 	}
 
@@ -399,6 +405,18 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 			return ErrStaleLease
 		}
 		return err
+	}
+
+	if len(msg.Artifacts) > 0 {
+		refs := make([]state.ArtifactRef, 0, len(msg.Artifacts))
+		for _, artifact := range msg.Artifacts {
+			refs = append(refs, state.ArtifactRef{
+				Type: artifact.Type,
+				URI:  artifact.URI,
+			})
+		}
+		// Artifact references are best-effort; job completion must not be blocked.
+		_ = s.store.RecordArtifacts(ctx, attempt.ID, refs)
 	}
 
 	return nil
