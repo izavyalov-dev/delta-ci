@@ -149,6 +149,17 @@ Each step is explicitly persisted.
 
 ---
 
+## Queue Dispatch (Phase 0)
+
+Phase 0 uses a **PostgreSQL-backed dispatch queue** for job attempts.
+
+- job attempts are inserted into a `job_queue` table with an `available_at` timestamp
+- dequeue uses `FOR UPDATE SKIP LOCKED` with a visibility timeout
+- duplicates are allowed (at-least-once delivery); lease fencing enforces correctness
+- queue items are acknowledged and removed when a lease is granted
+
+---
+
 ## State Ownership
 
 The Control Plane owns:

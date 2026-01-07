@@ -118,9 +118,9 @@ Runner constraints:
 
 ## Milestone 0.6 — Queue Integration
 
-☐ Implement at-least-once job dispatch  
-☐ Support duplicate delivery  
-☐ Ensure lease fencing works under duplicates  
+☑ Implement at-least-once job dispatch  
+☑ Support duplicate delivery  
+☑ Ensure lease fencing works under duplicates  
 
 Validation:
 - simulate duplicate job delivery

@@ -222,6 +222,10 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 		return protocol.LeaseGranted{}, err
 	}
 
+	if err := s.store.AckJobAttemptDispatch(ctx, attempt.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return protocol.LeaseGranted{}, err
+	}
+
 	// Move the run into RUNNING since an attempt is now leased.
 	if err := s.store.TransitionRunState(ctx, run.ID, state.RunStateRunning); err != nil {
 		return protocol.LeaseGranted{}, err
@@ -244,6 +248,11 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 		MaxRuntimeSeconds:        req.MaxRuntimeSeconds,
 		JobSpec:                  spec,
 	}, nil
+}
+
+// DequeueJobAttempt pulls the next available job attempt from the queue.
+func (s *Service) DequeueJobAttempt(ctx context.Context, visibilityTimeout time.Duration) (string, error) {
+	return s.store.DequeueJobAttempt(ctx, time.Now().UTC(), visibilityTimeout)
 }
 
 // AckLease transitions an active lease to ACTIVE and moves attempt/job into STARTING.
