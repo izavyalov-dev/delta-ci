@@ -55,6 +55,11 @@ const (
 	CompleteStatusFailed    CompleteStatus = "FAILED"
 )
 
+type ArtifactRef struct {
+	Type string `json:"type"`
+	URI  string `json:"uri"`
+}
+
 // Complete is sent by the runner when execution finishes.
 type Complete struct {
 	Type       string         `json:"type"` // always "Complete"
@@ -64,4 +69,5 @@ type Complete struct {
 	ExitCode   int            `json:"exit_code,omitempty"`
 	FinishedAt time.Time      `json:"finished_at"`
 	Summary    string         `json:"summary,omitempty"`
+	Artifacts  []ArtifactRef  `json:"artifacts,omitempty"`
 }

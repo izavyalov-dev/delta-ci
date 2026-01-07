@@ -102,11 +102,11 @@ Success criteria:
 
 ## Milestone 0.5 — Minimal Runner
 
-☐ CLI-based runner in Go  
-☐ Executes a single shell command  
-☐ Sends heartbeats  
-☐ Uploads a log artifact  
-☐ Completes job correctly  
+☑ CLI-based runner in Go  
+☑ Executes a single shell command  
+☑ Sends heartbeats  
+☑ Uploads a log artifact  
+☑ Completes job correctly  
 
 Runner constraints:
 - one job only
