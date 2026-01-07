@@ -43,6 +43,23 @@ WHERE id = $1
 	return run, nil
 }
 
+// GetJob returns a single job by ID.
+func (s *Store) GetJob(ctx context.Context, jobID string) (Job, error) {
+	var job Job
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, run_id, name, required, state, attempt_count, created_at, updated_at
+FROM jobs
+WHERE id = $1
+`, jobID).Scan(&job.ID, &job.RunID, &job.Name, &job.Required, &job.State, &job.AttemptCount, &job.CreatedAt, &job.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Job{}, fmt.Errorf("%w: job %s", ErrNotFound, jobID)
+		}
+		return Job{}, err
+	}
+	return job, nil
+}
+
 // CreateJob inserts a new job in CREATED state unless explicitly provided.
 func (s *Store) CreateJob(ctx context.Context, job Job) (Job, error) {
 	if job.State == "" {
@@ -155,6 +172,36 @@ ORDER BY attempt_number ASC
 	return attempts, rows.Err()
 }
 
+// GetJobAttempt returns a single attempt by ID.
+func (s *Store) GetJobAttempt(ctx context.Context, attemptID string) (JobAttempt, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, job_id, attempt_number, state, lease_id, created_at, updated_at, started_at, completed_at
+FROM job_attempts
+WHERE id = $1
+`, attemptID)
+
+	var attempt JobAttempt
+	var leaseID sql.NullString
+	var startedAt sql.NullTime
+	var completedAt sql.NullTime
+	if err := row.Scan(&attempt.ID, &attempt.JobID, &attempt.AttemptNumber, &attempt.State, &leaseID, &attempt.CreatedAt, &attempt.UpdatedAt, &startedAt, &completedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return JobAttempt{}, fmt.Errorf("%w: job attempt %s", ErrNotFound, attemptID)
+		}
+		return JobAttempt{}, err
+	}
+	if leaseID.Valid {
+		attempt.LeaseID = &leaseID.String
+	}
+	if startedAt.Valid {
+		attempt.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		attempt.CompletedAt = &completedAt.Time
+	}
+	return attempt, nil
+}
+
 // CreateLease inserts a new lease record.
 func (s *Store) CreateLease(ctx context.Context, lease Lease) (Lease, error) {
 	if lease.State == "" {
@@ -183,12 +230,73 @@ RETURNING granted_at, updated_at
 	return lease, nil
 }
 
-// TouchLeaseHeartbeat updates heartbeat metadata for an active lease.
-func (s *Store) TouchLeaseHeartbeat(ctx context.Context, leaseID string, heartbeatTime time.Time, newExpiry time.Time) error {
-	_, err := s.db.ExecContext(ctx, `
-UPDATE leases
-SET last_heartbeat_at = $2, expires_at = $3, updated_at = NOW()
+// GetLease returns a single lease by ID.
+func (s *Store) GetLease(ctx context.Context, leaseID string) (Lease, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, job_attempt_id, runner_id, state, ttl_seconds, heartbeat_interval_seconds, granted_at, updated_at, acknowledged_at, last_heartbeat_at, expires_at, completed_at
+FROM leases
 WHERE id = $1
-`, leaseID, heartbeatTime, newExpiry)
+`, leaseID)
+
+	var lease Lease
+	var runnerID sql.NullString
+	var acked sql.NullTime
+	var lastHB sql.NullTime
+	var expires sql.NullTime
+	var completed sql.NullTime
+	if err := row.Scan(
+		&lease.ID,
+		&lease.JobAttemptID,
+		&runnerID,
+		&lease.State,
+		&lease.TTLSeconds,
+		&lease.HeartbeatIntervalSeconds,
+		&lease.GrantedAt,
+		&lease.UpdatedAt,
+		&acked,
+		&lastHB,
+		&expires,
+		&completed,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Lease{}, fmt.Errorf("%w: lease %s", ErrNotFound, leaseID)
+		}
+		return Lease{}, err
+	}
+	if runnerID.Valid {
+		lease.RunnerID = &runnerID.String
+	}
+	if acked.Valid {
+		lease.AcknowledgedAt = &acked.Time
+	}
+	if lastHB.Valid {
+		lease.LastHeartbeatAt = &lastHB.Time
+	}
+	if expires.Valid {
+		lease.ExpiresAt = &expires.Time
+	}
+	if completed.Valid {
+		lease.CompletedAt = &completed.Time
+	}
+	return lease, nil
+}
+
+// MarkJobAttemptStarted sets the started_at timestamp.
+func (s *Store) MarkJobAttemptStarted(ctx context.Context, attemptID string, started time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE job_attempts
+SET started_at = $2, updated_at = NOW()
+WHERE id = $1
+`, attemptID, started)
+	return err
+}
+
+// MarkJobAttemptCompleted sets the completed_at timestamp.
+func (s *Store) MarkJobAttemptCompleted(ctx context.Context, attemptID string, completed time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE job_attempts
+SET completed_at = $2, updated_at = NOW()
+WHERE id = $1
+`, attemptID, completed)
 	return err
 }

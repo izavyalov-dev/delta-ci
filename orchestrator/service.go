@@ -4,9 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/izavyalov-dev/delta-ci/planner"
+	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/state"
+)
+
+var (
+	// ErrStaleLease indicates the lease is not active or has expired.
+	ErrStaleLease = errors.New("stale lease")
 )
 
 // Service wires planner outputs to state transitions and dispatch.
@@ -166,4 +173,231 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 		Run:  run,
 		Jobs: jobDetails,
 	}, nil
+}
+
+// GrantLease creates a lease for a queued attempt and returns the LeaseGranted payload.
+func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protocol.LeaseGranted, error) {
+	if req.AttemptID == "" {
+		return protocol.LeaseGranted{}, errors.New("attempt_id is required")
+	}
+	if req.TTLSeconds == 0 {
+		req.TTLSeconds = 120
+	}
+	if req.HeartbeatSeconds == 0 {
+		req.HeartbeatSeconds = 30
+	}
+	if req.TTLSeconds <= req.HeartbeatSeconds {
+		return protocol.LeaseGranted{}, errors.New("ttl_seconds must exceed heartbeat_seconds")
+	}
+
+	attempt, err := s.store.GetJobAttempt(ctx, req.AttemptID)
+	if err != nil {
+		return protocol.LeaseGranted{}, err
+	}
+
+	job, err := s.store.GetJob(ctx, attempt.JobID)
+	if err != nil {
+		return protocol.LeaseGranted{}, err
+	}
+
+	run, err := s.store.GetRun(ctx, job.RunID)
+	if err != nil {
+		return protocol.LeaseGranted{}, err
+	}
+
+	var runnerIDPtr *string
+	if req.RunnerID != "" {
+		runnerIDPtr = &req.RunnerID
+	}
+
+	leaseID := s.ids.LeaseID()
+	lease, err := s.store.GrantLease(ctx, attempt.ID, state.Lease{
+		ID:                       leaseID,
+		JobAttemptID:             attempt.ID,
+		RunnerID:                 runnerIDPtr,
+		TTLSeconds:               req.TTLSeconds,
+		HeartbeatIntervalSeconds: req.HeartbeatSeconds,
+	})
+	if err != nil {
+		return protocol.LeaseGranted{}, err
+	}
+
+	// Move the run into RUNNING since an attempt is now leased.
+	if err := s.store.TransitionRunState(ctx, run.ID, state.RunStateRunning); err != nil {
+		return protocol.LeaseGranted{}, err
+	}
+
+	spec := protocol.JobSpec{
+		Name:    job.Name,
+		Workdir: ".",
+		Steps:   []string{"echo \"TODO: implement job spec\""},
+		Env:     map[string]string{"CI": "true"},
+	}
+
+	return protocol.LeaseGranted{
+		Type:                     "LeaseGranted",
+		RunID:                    run.ID,
+		JobID:                    job.ID,
+		LeaseID:                  lease.ID,
+		LeaseTTLSeconds:          lease.TTLSeconds,
+		HeartbeatIntervalSeconds: lease.HeartbeatIntervalSeconds,
+		MaxRuntimeSeconds:        req.MaxRuntimeSeconds,
+		JobSpec:                  spec,
+	}, nil
+}
+
+// AckLease transitions an active lease to ACTIVE and moves attempt/job into STARTING.
+func (s *Service) AckLease(ctx context.Context, msg protocol.AckLease) error {
+	now := msg.AcceptedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	lease, err := s.store.AcknowledgeLease(ctx, msg.LeaseID, msg.RunnerID, now)
+	if err != nil {
+		if state.IsTransitionError(err) {
+			return ErrStaleLease
+		}
+		return err
+	}
+
+	attempt, err := s.store.GetJobAttempt(ctx, lease.JobAttemptID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.transitionJobAndAttempt(ctx, attempt.JobID, attempt.ID, state.JobStateStarting); err != nil {
+		return err
+	}
+
+	if err := s.store.MarkJobAttemptStarted(ctx, attempt.ID, now); err != nil {
+		return err
+	}
+
+	job, err := s.store.GetJob(ctx, attempt.JobID)
+	if err != nil {
+		return err
+	}
+	return s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning)
+}
+
+// HandleHeartbeat updates lease liveness and ensures attempt/job are RUNNING.
+func (s *Service) HandleHeartbeat(ctx context.Context, msg protocol.Heartbeat) (protocol.HeartbeatAck, error) {
+	ts := msg.TS
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+
+	lease, err := s.store.GetLease(ctx, msg.LeaseID)
+	if err != nil {
+		return protocol.HeartbeatAck{}, err
+	}
+	if lease.State != state.LeaseStateActive || lease.ExpiresAt != nil && ts.After(*lease.ExpiresAt) {
+		return protocol.HeartbeatAck{}, ErrStaleLease
+	}
+
+	if _, err := s.store.TouchLeaseHeartbeat(ctx, lease.ID, ts); err != nil {
+		if state.IsTransitionError(err) {
+			return protocol.HeartbeatAck{}, ErrStaleLease
+		}
+		return protocol.HeartbeatAck{}, err
+	}
+
+	attempt, err := s.store.GetJobAttempt(ctx, lease.JobAttemptID)
+	if err != nil {
+		return protocol.HeartbeatAck{}, err
+	}
+
+	if err := s.transitionJobAndAttempt(ctx, attempt.JobID, attempt.ID, state.JobStateRunning); err != nil {
+		return protocol.HeartbeatAck{}, err
+	}
+
+	job, err := s.store.GetJob(ctx, attempt.JobID)
+	if err != nil {
+		return protocol.HeartbeatAck{}, err
+	}
+	if err := s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning); err != nil {
+		return protocol.HeartbeatAck{}, err
+	}
+
+	return protocol.HeartbeatAck{
+		Type:                  "HeartbeatAck",
+		LeaseID:               lease.ID,
+		ExtendLease:           true,
+		NewLeaseTTLSeconds:    lease.TTLSeconds,
+		CancelRequested:       false,
+		CancelDeadlineSeconds: 0,
+	}, nil
+}
+
+// CompleteLease finalizes an attempt for an active lease.
+func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) error {
+	now := msg.FinishedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	lease, err := s.store.GetLease(ctx, msg.LeaseID)
+	if err != nil {
+		return err
+	}
+	if lease.State != state.LeaseStateActive || lease.ExpiresAt != nil && now.After(*lease.ExpiresAt) {
+		return ErrStaleLease
+	}
+
+	attempt, err := s.store.GetJobAttempt(ctx, lease.JobAttemptID)
+	if err != nil {
+		return err
+	}
+	job, err := s.store.GetJob(ctx, attempt.JobID)
+	if err != nil {
+		return err
+	}
+
+	// Ensure attempt/job are running before uploading -> terminal state.
+	if attempt.State != state.JobStateRunning && attempt.State != state.JobStateUploading {
+		if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, state.JobStateRunning); err != nil {
+			return err
+		}
+	}
+
+	if attempt.State != state.JobStateUploading {
+		if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, state.JobStateUploading); err != nil {
+			return err
+		}
+	}
+
+	var target state.JobState
+	switch msg.Status {
+	case protocol.CompleteStatusSucceeded:
+		target = state.JobStateSucceeded
+	case protocol.CompleteStatusFailed:
+		target = state.JobStateFailed
+	default:
+		return fmt.Errorf("unknown completion status %q", msg.Status)
+	}
+
+	if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, target); err != nil {
+		return err
+	}
+
+	if err := s.store.MarkJobAttemptCompleted(ctx, attempt.ID, now); err != nil {
+		return err
+	}
+
+	if _, err := s.store.CompleteLease(ctx, lease.ID, now, state.LeaseStateCompleted); err != nil {
+		if state.IsTransitionError(err) {
+			return ErrStaleLease
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (s *Service) transitionJobAndAttempt(ctx context.Context, jobID, attemptID string, target state.JobState) error {
+	if err := s.store.TransitionJobAttemptState(ctx, attemptID, target); err != nil {
+		return err
+	}
+	return s.store.TransitionJobState(ctx, jobID, target)
 }

@@ -87,11 +87,11 @@ Ignore:
 
 ## Milestone 0.4 — Runner Protocol (Minimal)
 
-☐ Implement `LeaseGranted`  
-☐ Implement `AckLease`  
-☐ Implement `Heartbeat`  
-☐ Implement `Complete`  
-☐ Reject stale leases  
+☑ Implement `LeaseGranted`  
+☑ Implement `AckLease`  
+☑ Implement `Heartbeat`  
+☑ Implement `Complete`  
+☑ Reject stale leases  
 
 Success criteria:
 - only one lease can finalize a job

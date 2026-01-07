@@ -9,6 +9,15 @@ type CreateRunRequest struct {
 	CommitSHA string
 }
 
+// GrantLeaseRequest describes parameters to grant a lease to a runner.
+type GrantLeaseRequest struct {
+	AttemptID         string
+	RunnerID          string
+	TTLSeconds        int
+	HeartbeatSeconds  int
+	MaxRuntimeSeconds int
+}
+
 // RunDetails aggregates run, jobs, and attempts for read-only APIs.
 type RunDetails struct {
 	Run  state.Run   `json:"run"`
