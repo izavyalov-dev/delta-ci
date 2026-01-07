@@ -26,16 +26,18 @@ Observability must enable operators to:
 All control plane components must emit structured logs with:
 - `run_id`
 - `job_id`
-- `lease_id` (redacted or hashed if needed)
+- `lease_id_hash` (hash only; lease IDs are treated as secrets)
 - `repo_id`
 - `component`
 - `severity`
 - `event`
 
+Phase 0 emits JSON logs by default.
+
 Logs must never include:
 - secrets
 - raw environment variables
-- tokens or lease IDs in plaintext (prefer hashing)
+- tokens or lease IDs in plaintext
 
 ---
 
@@ -61,6 +63,13 @@ Storage:
 - artifact store latency
 - DB latency and error rate
 - queue latency and depth
+
+### Phase 0 Metrics (Implemented)
+
+- `delta_runs_total{state=...}`
+- `delta_jobs_total{state=...}`
+- `delta_leases_total{state=...}`
+- `delta_failures_total{type=...}`
 
 ---
 

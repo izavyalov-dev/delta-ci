@@ -142,14 +142,14 @@ Failure mode:
 
 ## Milestone 0.8 — Observability (Minimal)
 
-☐ Structured logs (JSON)  
-☐ Prometheus metrics:
+☑ Structured logs (JSON)  
+☑ Prometheus metrics:
 - runs
 - jobs
 - leases
 - failures
 
-☐ Correlate logs by run/job/lease IDs  
+☑ Correlate logs by run/job/lease IDs  
 
 ---
 

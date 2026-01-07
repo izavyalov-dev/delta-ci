@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/izavyalov-dev/delta-ci/internal/observability"
 	"github.com/izavyalov-dev/delta-ci/planner"
 	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/state"
@@ -22,6 +24,8 @@ type Service struct {
 	planner    planner.Planner
 	dispatcher Dispatcher
 	ids        IDGenerator
+	logger     *slog.Logger
+	metrics    *observability.Metrics
 }
 
 // NewService constructs an orchestrator service with sensible defaults.
@@ -35,11 +39,15 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 	if ids == nil {
 		ids = RandomIDGenerator{}
 	}
+	logger := observability.NewLogger("orchestrator")
+	metrics := observability.NewMetrics(nil)
 	return &Service{
 		store:      store,
 		planner:    plan,
 		dispatcher: dispatcher,
 		ids:        ids,
+		logger:     logger,
+		metrics:    metrics,
 	}
 }
 
@@ -62,9 +70,15 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		return RunDetails{}, fmt.Errorf("create run: %w", err)
 	}
 
+	runLogger := observability.WithRun(s.logger, run.ID)
+	runLogger.Info("run created", "event", "run_created", "repo_id", run.RepoID, "ref", run.Ref, "commit_sha", run.CommitSHA)
+	s.metrics.IncRun("created")
+
 	if err := s.store.TransitionRunState(ctx, runID, state.RunStatePlanning); err != nil {
 		return RunDetails{}, err
 	}
+	runLogger.Info("run planning started", "event", "run_planning")
+	s.metrics.IncRun("planning")
 
 	planResult, err := s.planner.Plan(ctx, planner.PlanRequest{
 		RunID:     runID,
@@ -74,11 +88,17 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 	})
 	if err != nil {
 		_ = s.store.TransitionRunState(ctx, runID, state.RunStatePlanFailed)
+		runLogger.Error("planner failed", "event", "plan_failed", "error", err)
+		s.metrics.IncRun("plan_failed")
+		s.metrics.IncFailure("plan_failed")
 		return RunDetails{}, fmt.Errorf("planner failed: %w", err)
 	}
 
 	if len(planResult.Jobs) == 0 {
 		_ = s.store.TransitionRunState(ctx, runID, state.RunStatePlanFailed)
+		runLogger.Error("planner returned no jobs", "event", "plan_failed")
+		s.metrics.IncRun("plan_failed")
+		s.metrics.IncFailure("plan_failed")
 		return RunDetails{}, errors.New("planner returned no jobs")
 	}
 
@@ -95,6 +115,9 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		if err != nil {
 			return RunDetails{}, fmt.Errorf("create job %s: %w", planned.Name, err)
 		}
+		jobLogger := observability.WithJob(runLogger, job.ID)
+		jobLogger.Info("job created", "event", "job_created", "name", job.Name, "required", job.Required)
+		s.metrics.IncJob("created")
 
 		attemptID := s.ids.JobAttemptID()
 		attempt, err := s.store.CreateJobAttempt(ctx, state.JobAttempt{
@@ -112,6 +135,8 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		}
 		job.State = state.JobStateQueued
 		job.AttemptCount = attempt.AttemptNumber
+		jobLogger.Info("job queued", "event", "job_queued", "attempt_id", attempt.ID)
+		s.metrics.IncJob("queued")
 
 		if err := s.store.TransitionJobAttemptState(ctx, attempt.ID, state.JobStateQueued); err != nil {
 			return RunDetails{}, err
@@ -119,6 +144,8 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		attempt.State = state.JobStateQueued
 
 		if err := s.dispatcher.EnqueueJobAttempt(ctx, attempt); err != nil {
+			jobLogger.Error("enqueue attempt failed", "event", "enqueue_failed", "error", err)
+			s.metrics.IncFailure("enqueue_failed")
 			return RunDetails{}, fmt.Errorf("enqueue attempt %s: %w", attempt.ID, err)
 		}
 
@@ -131,6 +158,8 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 	if err := s.store.TransitionRunState(ctx, runID, state.RunStateQueued); err != nil {
 		return RunDetails{}, err
 	}
+	runLogger.Info("run queued", "event", "run_queued")
+	s.metrics.IncRun("queued")
 
 	// Reload run to capture updated timestamps/state.
 	run, err = s.store.GetRun(ctx, runID)
@@ -227,6 +256,10 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 	if err != nil {
 		return protocol.LeaseGranted{}, err
 	}
+	leaseLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, run.ID), job.ID), lease.ID)
+	leaseLogger.Info("lease granted", "event", "lease_granted", "attempt_id", attempt.ID, "runner_id", req.RunnerID)
+	s.metrics.IncLease("granted")
+	s.metrics.IncJob("leased")
 
 	if err := s.store.AckJobAttemptDispatch(ctx, attempt.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
 		return protocol.LeaseGranted{}, err
@@ -236,6 +269,7 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 	if err := s.store.TransitionRunState(ctx, run.ID, state.RunStateRunning); err != nil {
 		return protocol.LeaseGranted{}, err
 	}
+	s.metrics.IncRun("running")
 
 	spec := protocol.JobSpec{
 		Name:    job.Name,
@@ -271,6 +305,8 @@ func (s *Service) AckLease(ctx context.Context, msg protocol.AckLease) error {
 	lease, err := s.store.AcknowledgeLease(ctx, msg.LeaseID, msg.RunnerID, now)
 	if err != nil {
 		if state.IsTransitionError(err) {
+			s.logger.Warn("stale lease ack", "event", "lease_stale", "error", err)
+			s.metrics.IncFailure("stale_lease")
 			return ErrStaleLease
 		}
 		return err
@@ -293,6 +329,12 @@ func (s *Service) AckLease(ctx context.Context, msg protocol.AckLease) error {
 	if err != nil {
 		return err
 	}
+	ackLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
+	ackLogger.Info("lease acknowledged", "event", "lease_acknowledged", "runner_id", msg.RunnerID)
+	s.metrics.IncLease("active")
+	if attempt.State != state.JobStateStarting {
+		s.metrics.IncJob("starting")
+	}
 	return s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning)
 }
 
@@ -308,11 +350,13 @@ func (s *Service) HandleHeartbeat(ctx context.Context, msg protocol.Heartbeat) (
 		return protocol.HeartbeatAck{}, err
 	}
 	if lease.State != state.LeaseStateActive || lease.ExpiresAt != nil && ts.After(*lease.ExpiresAt) {
+		s.metrics.IncFailure("stale_lease")
 		return protocol.HeartbeatAck{}, ErrStaleLease
 	}
 
 	if _, err := s.store.TouchLeaseHeartbeat(ctx, lease.ID, ts); err != nil {
 		if state.IsTransitionError(err) {
+			s.metrics.IncFailure("stale_lease")
 			return protocol.HeartbeatAck{}, ErrStaleLease
 		}
 		return protocol.HeartbeatAck{}, err
@@ -323,6 +367,7 @@ func (s *Service) HandleHeartbeat(ctx context.Context, msg protocol.Heartbeat) (
 		return protocol.HeartbeatAck{}, err
 	}
 
+	transitionedToRunning := attempt.State != state.JobStateRunning
 	if err := s.transitionJobAndAttempt(ctx, attempt.JobID, attempt.ID, state.JobStateRunning); err != nil {
 		return protocol.HeartbeatAck{}, err
 	}
@@ -330,6 +375,11 @@ func (s *Service) HandleHeartbeat(ctx context.Context, msg protocol.Heartbeat) (
 	job, err := s.store.GetJob(ctx, attempt.JobID)
 	if err != nil {
 		return protocol.HeartbeatAck{}, err
+	}
+	heartbeatLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
+	heartbeatLogger.Debug("heartbeat received", "event", "lease_heartbeat")
+	if transitionedToRunning {
+		s.metrics.IncJob("running")
 	}
 	if err := s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning); err != nil {
 		return protocol.HeartbeatAck{}, err
@@ -357,6 +407,7 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 		return err
 	}
 	if lease.State != state.LeaseStateActive || lease.ExpiresAt != nil && now.After(*lease.ExpiresAt) {
+		s.metrics.IncFailure("stale_lease")
 		return ErrStaleLease
 	}
 
@@ -368,6 +419,7 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 	if err != nil {
 		return err
 	}
+	completeLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
 
 	// Ensure attempt/job are running before uploading -> terminal state.
 	if attempt.State != state.JobStateRunning && attempt.State != state.JobStateUploading {
@@ -394,6 +446,12 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 
 	if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, target); err != nil {
 		return err
+	}
+	completeLogger.Info("job completed", "event", "job_completed", "status", msg.Status, "exit_code", msg.ExitCode)
+	s.metrics.IncJob(jobMetricState(target))
+	s.metrics.IncLease("completed")
+	if target == state.JobStateFailed {
+		s.metrics.IncFailure("job_failed")
 	}
 
 	if err := s.store.MarkJobAttemptCompleted(ctx, attempt.ID, now); err != nil {
@@ -427,4 +485,23 @@ func (s *Service) transitionJobAndAttempt(ctx context.Context, jobID, attemptID 
 		return err
 	}
 	return s.store.TransitionJobState(ctx, jobID, target)
+}
+
+func jobMetricState(stateValue state.JobState) string {
+	switch stateValue {
+	case state.JobStateSucceeded:
+		return "succeeded"
+	case state.JobStateFailed:
+		return "failed"
+	case state.JobStateRunning:
+		return "running"
+	case state.JobStateQueued:
+		return "queued"
+	case state.JobStateLeased:
+		return "leased"
+	case state.JobStateStarting:
+		return "starting"
+	default:
+		return "other"
+	}
 }

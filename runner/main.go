@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 
+	"github.com/izavyalov-dev/delta-ci/internal/observability"
 	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/runner/artifacts"
 	"github.com/izavyalov-dev/delta-ci/runner/transport"
@@ -27,28 +27,38 @@ func main() {
 	s3Region := flag.String("s3-region", "", "AWS region for S3 (optional)")
 	flag.Parse()
 
-	stderrLogger := log.New(os.Stderr, "", log.LstdFlags)
+	baseLogger := observability.NewLogger("runner")
 
 	if *runnerID == "" {
-		stderrLogger.Fatal("runner-id is required")
+		baseLogger.Error("runner-id is required", "event", "runner_error")
+		os.Exit(1)
 	}
 	if *leasePath == "" {
-		stderrLogger.Fatal("lease path is required")
+		baseLogger.Error("lease path is required", "event", "runner_error")
+		os.Exit(1)
 	}
 
 	leaseFile, err := os.ReadFile(*leasePath)
 	if err != nil {
-		stderrLogger.Fatalf("read lease file: %v", err)
+		baseLogger.Error("read lease file", "event", "runner_error", "error", err)
+		os.Exit(1)
 	}
 
 	var lease protocol.LeaseGranted
 	if err := json.Unmarshal(leaseFile, &lease); err != nil {
-		stderrLogger.Fatalf("parse lease: %v", err)
+		baseLogger.Error("parse lease", "event", "runner_error", "error", err)
+		os.Exit(1)
 	}
+
+	logger := baseLogger
+	logger = observability.WithRun(logger, lease.RunID)
+	logger = observability.WithJob(logger, lease.JobID)
+	logger = observability.WithLease(logger, lease.LeaseID)
 
 	logWriter, err := os.Create(filepath.Clean(*logPath))
 	if err != nil {
-		stderrLogger.Fatalf("open log file: %v", err)
+		logger.Error("open log file", "event", "runner_error", "error", err)
+		os.Exit(1)
 	}
 	defer logWriter.Close()
 
@@ -63,8 +73,10 @@ func main() {
 		AcceptedAt: time.Now().UTC(),
 	}
 	if err := client.AckLease(ctx, ack); err != nil {
-		stderrLogger.Fatalf("ack lease: %v", err)
+		logger.Error("ack lease", "event", "runner_error", "error", err)
+		os.Exit(1)
 	}
+	logger.Info("lease acknowledged", "event", "lease_acknowledged")
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", firstStep(lease.JobSpec.Steps))
 	cmd.Dir = *workdir
@@ -78,8 +90,10 @@ func main() {
 		RunnerID: *runnerID,
 		TS:       start,
 	}); err != nil {
-		stderrLogger.Fatalf("first heartbeat: %v", err)
+		logger.Error("first heartbeat", "event", "runner_error", "error", err)
+		os.Exit(1)
 	}
+	logger.Debug("heartbeat sent", "event", "lease_heartbeat")
 
 	runnerErr := cmd.Run()
 	finished := time.Now().UTC()
@@ -94,7 +108,7 @@ func main() {
 	}
 
 	if err := logWriter.Sync(); err != nil {
-		stderrLogger.Printf("sync log file: %v", err)
+		logger.Warn("sync log file", "event", "runner_warning", "error", err)
 	}
 
 	var artifactsList []protocol.ArtifactRef
@@ -105,16 +119,17 @@ func main() {
 			Region: *s3Region,
 		})
 		if err != nil {
-			stderrLogger.Printf("init s3 uploader: %v", err)
+			logger.Warn("init s3 uploader", "event", "artifact_upload_failed", "error", err)
 		} else {
 			uri, err := uploader.UploadLog(ctx, lease.RunID, lease.JobID, *logPath)
 			if err != nil {
-				stderrLogger.Printf("upload log: %v", err)
+				logger.Warn("upload log", "event", "artifact_upload_failed", "error", err)
 			} else {
 				artifactsList = append(artifactsList, protocol.ArtifactRef{
 					Type: "log",
 					URI:  uri,
 				})
+				logger.Info("log uploaded", "event", "artifact_uploaded", "uri", uri)
 			}
 		}
 	}
@@ -130,8 +145,10 @@ func main() {
 		Artifacts:  artifactsList,
 	}
 	if err := client.Complete(ctx, complete); err != nil {
-		stderrLogger.Fatalf("complete: %v", err)
+		logger.Error("complete", "event", "runner_error", "error", err)
+		os.Exit(1)
 	}
+	logger.Info("job completed", "event", "job_completed", "status", status, "exit_code", exit)
 }
 
 func firstStep(steps []string) string {
