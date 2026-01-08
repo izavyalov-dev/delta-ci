@@ -17,9 +17,13 @@ var queue string
 //go:embed 0003_artifacts.sql
 var artifacts string
 
+//go:embed 0004_job_specs.sql
+var jobSpecs string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
 	{ID: "0002_job_queue", Script: queue},
 	{ID: "0003_artifacts", Script: artifacts},
+	{ID: "0004_job_specs", Script: jobSpecs},
 }

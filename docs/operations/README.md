@@ -19,6 +19,7 @@ operations/
 ├─ deployment.md          # Deployment models and infrastructure assumptions
 ├─ scaling.md             # Scaling strategies and capacity planning
 ├─ observability.md       # Metrics, logs, traces, and alerting
+├─ dogfooding.md          # Phase 0 dogfooding workflow
 └─ disaster-recovery.md   # Failure scenarios and recovery procedures
 ```
 

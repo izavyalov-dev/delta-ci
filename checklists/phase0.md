@@ -155,12 +155,12 @@ Failure mode:
 
 ## Milestone 0.9 — Dogfooding
 
-☐ Use Delta CI to build Delta CI  
-☐ Run at least:
+☑ Use Delta CI to build Delta CI  
+☑ Run at least:
 - build job
 - test job
 
-☐ Validate:
+☑ Validate:
 - lease expiration
 - runner crash recovery
 - orchestrator restart recovery

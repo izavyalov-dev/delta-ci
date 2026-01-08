@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -119,6 +120,24 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		jobLogger.Info("job created", "event", "job_created", "name", job.Name, "required", job.Required)
 		s.metrics.IncJob("created")
 
+		spec := planned.Spec
+		if spec.Name == "" {
+			spec.Name = job.Name
+		}
+		if spec.Workdir == "" {
+			spec.Workdir = "."
+		}
+		if len(spec.Steps) == 0 {
+			spec.Steps = []string{"echo \"job spec missing\""}
+		}
+		specJSON, err := json.Marshal(spec)
+		if err != nil {
+			return RunDetails{}, fmt.Errorf("encode job spec %s: %w", job.ID, err)
+		}
+		if err := s.store.RecordJobSpec(ctx, job.ID, specJSON); err != nil {
+			return RunDetails{}, fmt.Errorf("record job spec %s: %w", job.ID, err)
+		}
+
 		attemptID := s.ids.JobAttemptID()
 		attempt, err := s.store.CreateJobAttempt(ctx, state.JobAttempt{
 			ID:            attemptID,
@@ -150,8 +169,9 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		}
 
 		jobDetails = append(jobDetails, JobDetail{
-			Job:      job,
-			Attempts: []state.JobAttempt{attempt},
+			Job:       job,
+			Attempts:  []state.JobAttempt{attempt},
+			Artifacts: nil,
 		})
 	}
 
@@ -271,11 +291,23 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 	}
 	s.metrics.IncRun("running")
 
-	spec := protocol.JobSpec{
-		Name:    job.Name,
-		Workdir: ".",
-		Steps:   []string{"echo \"TODO: implement job spec\""},
-		Env:     map[string]string{"CI": "true"},
+	specJSON, err := s.store.GetJobSpec(ctx, job.ID)
+	if err != nil {
+		return protocol.LeaseGranted{}, err
+	}
+
+	var spec protocol.JobSpec
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		return protocol.LeaseGranted{}, fmt.Errorf("decode job spec %s: %w", job.ID, err)
+	}
+	if spec.Name == "" {
+		spec.Name = job.Name
+	}
+	if spec.Workdir == "" {
+		spec.Workdir = "."
+	}
+	if len(spec.Steps) == 0 {
+		return protocol.LeaseGranted{}, errors.New("job spec steps required")
 	}
 
 	return protocol.LeaseGranted{
@@ -293,6 +325,21 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 // DequeueJobAttempt pulls the next available job attempt from the queue.
 func (s *Service) DequeueJobAttempt(ctx context.Context, visibilityTimeout time.Duration) (string, error) {
 	return s.store.DequeueJobAttempt(ctx, time.Now().UTC(), visibilityTimeout)
+}
+
+// ExpireLeases sweeps expired leases and requeues attempts.
+func (s *Service) ExpireLeases(ctx context.Context, limit int) (int, error) {
+	count, err := s.store.ExpireLeases(ctx, time.Now().UTC(), limit)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < count; i++ {
+		s.metrics.IncLease("expired")
+	}
+	if count > 0 {
+		s.logger.Info("expired leases requeued", "event", "lease_expired", "count", count)
+	}
+	return count, nil
 }
 
 // AckLease transitions an active lease to ACTIVE and moves attempt/job into STARTING.
@@ -477,6 +524,11 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 		_ = s.store.RecordArtifacts(ctx, attempt.ID, refs)
 	}
 
+	if err := s.finalizeRunIfReady(ctx, job.RunID); err != nil {
+		s.metrics.IncFailure("run_finalize_failed")
+		completeLogger.Error("run finalization failed", "event", "run_finalize_failed", "error", err)
+	}
+
 	return nil
 }
 
@@ -504,4 +556,50 @@ func jobMetricState(stateValue state.JobState) string {
 	default:
 		return "other"
 	}
+}
+
+func (s *Service) finalizeRunIfReady(ctx context.Context, runID string) error {
+	run, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run.State != state.RunStateRunning {
+		return nil
+	}
+
+	jobs, err := s.store.ListJobsByRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+
+	allRequiredSucceeded := true
+	for _, job := range jobs {
+		if !job.Required {
+			continue
+		}
+		switch job.State {
+		case state.JobStateSucceeded:
+			continue
+		case state.JobStateFailed, state.JobStateTimedOut, state.JobStateCanceled:
+			allRequiredSucceeded = false
+			if err := s.store.TransitionRunState(ctx, runID, state.RunStateFailed); err != nil {
+				return err
+			}
+			s.metrics.IncRun("failed")
+			s.logger.Info("run failed", "event", "run_failed", "run_id", runID)
+			return nil
+		default:
+			return nil
+		}
+	}
+
+	if allRequiredSucceeded {
+		if err := s.store.TransitionRunState(ctx, runID, state.RunStateSuccess); err != nil {
+			return err
+		}
+		s.metrics.IncRun("success")
+		s.logger.Info("run succeeded", "event", "run_succeeded", "run_id", runID)
+	}
+
+	return nil
 }

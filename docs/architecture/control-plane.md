@@ -168,6 +168,7 @@ The Control Plane owns:
 - job state
 - attempt state
 - lease state
+- job specifications (persisted for recovery)
 - retry counters
 - cancellation intent
 

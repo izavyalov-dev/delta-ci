@@ -1,6 +1,10 @@
 package planner
 
-import "context"
+import (
+	"context"
+
+	"github.com/izavyalov-dev/delta-ci/protocol"
+)
 
 // Planner produces a list of jobs to run for a given run.
 type Planner interface {
@@ -24,6 +28,7 @@ type PlanResult struct {
 type PlannedJob struct {
 	Name     string
 	Required bool
+	Spec     protocol.JobSpec
 }
 
 // StaticPlanner returns a fixed list of jobs. This keeps Phase 0 simple while
@@ -40,7 +45,24 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 	// Default to a single required "build" job during early bootstrap.
 	return PlanResult{
 		Jobs: []PlannedJob{
-			{Name: "build", Required: true},
+			{
+				Name:     "build",
+				Required: true,
+				Spec: protocol.JobSpec{
+					Name:    "build",
+					Workdir: ".",
+					Steps:   []string{"go build ./..."},
+				},
+			},
+			{
+				Name:     "test",
+				Required: true,
+				Spec: protocol.JobSpec{
+					Name:    "test",
+					Workdir: ".",
+					Steps:   []string{"go test ./..."},
+				},
+			},
 		},
 	}, nil
 }
