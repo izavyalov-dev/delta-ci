@@ -59,16 +59,6 @@ If your environment requires it, you can disable cgo:
 export CGO_ENABLED=0
 ```
 
-### Slow Steps (Cancel Testing)
-
-To force longer-running jobs for cancel testing, set:
-
-```bash
-export DELTA_CI_SLOW_STEP_SECONDS=20
-```
-
-This prefixes each job step with a `sleep` delay when using the static planner.
-
 ## Local Worker for Webhook Runs
 
 When using GitHub webhooks locally, the orchestrator will create runs but jobs
