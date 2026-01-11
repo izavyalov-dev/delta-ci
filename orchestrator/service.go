@@ -25,12 +25,13 @@ type Service struct {
 	planner    planner.Planner
 	dispatcher Dispatcher
 	ids        IDGenerator
+	reporter   StatusReporter
 	logger     *slog.Logger
 	metrics    *observability.Metrics
 }
 
 // NewService constructs an orchestrator service with sensible defaults.
-func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator) *Service {
+func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator, reporter StatusReporter) *Service {
 	if plan == nil {
 		plan = planner.StaticPlanner{}
 	}
@@ -40,6 +41,9 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 	if ids == nil {
 		ids = RandomIDGenerator{}
 	}
+	if reporter == nil {
+		reporter = NoopStatusReporter{}
+	}
 	logger := observability.NewLogger("orchestrator")
 	metrics := observability.NewMetrics(nil)
 	return &Service{
@@ -47,6 +51,7 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 		planner:    plan,
 		dispatcher: dispatcher,
 		ids:        ids,
+		reporter:   reporter,
 		logger:     logger,
 		metrics:    metrics,
 	}
@@ -55,8 +60,8 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 // CreateRun creates a run, transitions it through planning, creates initial jobs
 // and attempts, enqueues them, and returns the resulting state.
 func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetails, error) {
-	if req.RepoID == "" || req.Ref == "" || req.CommitSHA == "" {
-		return RunDetails{}, errors.New("repo_id, ref, and commit_sha are required")
+	if err := validateCreateRunRequest(req); err != nil {
+		return RunDetails{}, err
 	}
 
 	runID := s.ids.RunID()
@@ -71,35 +76,71 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		return RunDetails{}, fmt.Errorf("create run: %w", err)
 	}
 
+	return s.startRun(ctx, run)
+}
+
+// CreateRunFromTrigger creates a run with a webhook trigger if the event is new.
+func (s *Service) CreateRunFromTrigger(ctx context.Context, req CreateRunRequest, trigger state.RunTrigger) (RunDetails, bool, error) {
+	if err := validateCreateRunRequest(req); err != nil {
+		return RunDetails{}, false, err
+	}
+
+	runID := s.ids.RunID()
+	run, created, err := s.store.CreateRunWithTrigger(ctx, state.Run{
+		ID:        runID,
+		RepoID:    req.RepoID,
+		Ref:       req.Ref,
+		CommitSHA: req.CommitSHA,
+		State:     state.RunStateCreated,
+	}, trigger)
+	if err != nil {
+		return RunDetails{}, false, err
+	}
+	if !created {
+		details, err := s.GetRunDetails(ctx, run.ID)
+		return details, false, err
+	}
+
+	details, err := s.startRun(ctx, run)
+	return details, true, err
+}
+
+func validateCreateRunRequest(req CreateRunRequest) error {
+	if req.RepoID == "" || req.Ref == "" || req.CommitSHA == "" {
+		return errors.New("repo_id, ref, and commit_sha are required")
+	}
+	return nil
+}
+
+func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, error) {
 	runLogger := observability.WithRun(s.logger, run.ID)
 	runLogger.Info("run created", "event", "run_created", "repo_id", run.RepoID, "ref", run.Ref, "commit_sha", run.CommitSHA)
 	s.metrics.IncRun("created")
 
-	if err := s.store.TransitionRunState(ctx, runID, state.RunStatePlanning); err != nil {
+	if err := s.store.TransitionRunState(ctx, run.ID, state.RunStatePlanning); err != nil {
 		return RunDetails{}, err
 	}
 	runLogger.Info("run planning started", "event", "run_planning")
 	s.metrics.IncRun("planning")
+	s.reportRun(ctx, run.ID)
 
 	planResult, err := s.planner.Plan(ctx, planner.PlanRequest{
-		RunID:     runID,
-		RepoID:    req.RepoID,
-		Ref:       req.Ref,
-		CommitSHA: req.CommitSHA,
+		RunID:     run.ID,
+		RepoID:    run.RepoID,
+		Ref:       run.Ref,
+		CommitSHA: run.CommitSHA,
 	})
 	if err != nil {
-		_ = s.store.TransitionRunState(ctx, runID, state.RunStatePlanFailed)
-		runLogger.Error("planner failed", "event", "plan_failed", "error", err)
-		s.metrics.IncRun("plan_failed")
-		s.metrics.IncFailure("plan_failed")
+		if failErr := s.failRun(ctx, run.ID, runLogger, "plan_failed", err); failErr != nil {
+			return RunDetails{}, failErr
+		}
 		return RunDetails{}, fmt.Errorf("planner failed: %w", err)
 	}
 
 	if len(planResult.Jobs) == 0 {
-		_ = s.store.TransitionRunState(ctx, runID, state.RunStatePlanFailed)
-		runLogger.Error("planner returned no jobs", "event", "plan_failed")
-		s.metrics.IncRun("plan_failed")
-		s.metrics.IncFailure("plan_failed")
+		if failErr := s.failRun(ctx, run.ID, runLogger, "plan_failed", errors.New("planner returned no jobs")); failErr != nil {
+			return RunDetails{}, failErr
+		}
 		return RunDetails{}, errors.New("planner returned no jobs")
 	}
 
@@ -108,7 +149,7 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		jobID := s.ids.JobID()
 		job, err := s.store.CreateJob(ctx, state.Job{
 			ID:       jobID,
-			RunID:    runID,
+			RunID:    run.ID,
 			Name:     planned.Name,
 			Required: planned.Required,
 			State:    state.JobStateCreated,
@@ -175,14 +216,15 @@ func (s *Service) CreateRun(ctx context.Context, req CreateRunRequest) (RunDetai
 		})
 	}
 
-	if err := s.store.TransitionRunState(ctx, runID, state.RunStateQueued); err != nil {
+	if err := s.store.TransitionRunState(ctx, run.ID, state.RunStateQueued); err != nil {
 		return RunDetails{}, err
 	}
 	runLogger.Info("run queued", "event", "run_queued")
 	s.metrics.IncRun("queued")
+	s.reportRun(ctx, run.ID)
 
 	// Reload run to capture updated timestamps/state.
-	run, err = s.store.GetRun(ctx, runID)
+	run, err = s.store.GetRun(ctx, run.ID)
 	if err != nil {
 		return RunDetails{}, err
 	}
@@ -290,6 +332,7 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 		return protocol.LeaseGranted{}, err
 	}
 	s.metrics.IncRun("running")
+	s.reportRun(ctx, run.ID)
 
 	specJSON, err := s.store.GetJobSpec(ctx, job.ID)
 	if err != nil {
@@ -587,6 +630,7 @@ func (s *Service) finalizeRunIfReady(ctx context.Context, runID string) error {
 			}
 			s.metrics.IncRun("failed")
 			s.logger.Info("run failed", "event", "run_failed", "run_id", runID)
+			s.reportRun(ctx, runID)
 			return nil
 		default:
 			return nil
@@ -599,7 +643,37 @@ func (s *Service) finalizeRunIfReady(ctx context.Context, runID string) error {
 		}
 		s.metrics.IncRun("success")
 		s.logger.Info("run succeeded", "event", "run_succeeded", "run_id", runID)
+		s.reportRun(ctx, runID)
 	}
 
 	return nil
+}
+
+func (s *Service) failRun(ctx context.Context, runID string, logger *slog.Logger, reason string, cause error) error {
+	_ = s.store.TransitionRunState(ctx, runID, state.RunStatePlanFailed)
+	if logger != nil {
+		if cause != nil {
+			logger.Error("planner failed", "event", reason, "error", cause)
+		} else {
+			logger.Error("planner failed", "event", reason)
+		}
+	}
+	s.metrics.IncRun("plan_failed")
+	s.metrics.IncFailure("plan_failed")
+	if err := s.store.TransitionRunState(ctx, runID, state.RunStateFailed); err != nil && !state.IsTransitionError(err) {
+		return err
+	}
+	s.metrics.IncRun("failed")
+	s.reportRun(ctx, runID)
+	return nil
+}
+
+func (s *Service) reportRun(ctx context.Context, runID string) {
+	if s.reporter == nil || runID == "" {
+		return
+	}
+	if err := s.reporter.ReportRun(ctx, runID); err != nil {
+		s.metrics.IncFailure("status_report_failed")
+		s.logger.Warn("status report failed", "event", "status_report_failed", "run_id", runID, "error", err)
+	}
 }

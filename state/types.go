@@ -68,3 +68,27 @@ type Artifact struct {
 	URI          string    `json:"uri"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+// RunTrigger captures webhook metadata for idempotency and reporting.
+type RunTrigger struct {
+	RunID     string    `json:"run_id"`
+	Provider  string    `json:"provider"`
+	EventKey  string    `json:"event_key"`
+	EventType string    `json:"event_type"`
+	RepoID    string    `json:"repo_id"`
+	RepoOwner string    `json:"repo_owner"`
+	RepoName  string    `json:"repo_name"`
+	PRNumber  *int      `json:"pr_number,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// StatusReport stores outbound VCS reporting metadata for a run.
+type StatusReport struct {
+	RunID       string    `json:"run_id"`
+	Provider    string    `json:"provider"`
+	CheckRunID  *string   `json:"check_run_id,omitempty"`
+	PRCommentID *string   `json:"pr_comment_id,omitempty"`
+	LastState   string    `json:"last_state"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

@@ -3,17 +3,29 @@ package orchestrator
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
+	"github.com/izavyalov-dev/delta-ci/internal/vcs/github"
 	"github.com/izavyalov-dev/delta-ci/protocol"
+	"github.com/izavyalov-dev/delta-ci/state"
 )
 
+// HTTPConfig controls public webhook handling.
+type HTTPConfig struct {
+	GitHubWebhookSecret   string
+	GitHubWebhookMaxBytes int64
+}
+
 // NewHTTPHandler wires minimal internal endpoints for runner protocol and metrics.
-func NewHTTPHandler(service *Service, logger *slog.Logger) http.Handler {
+func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) http.Handler {
 	if logger == nil {
 		logger = observability.NewLogger("orchestrator.http")
+	}
+	if config.GitHubWebhookMaxBytes <= 0 {
+		config.GitHubWebhookMaxBytes = 1 << 20
 	}
 
 	mux := http.NewServeMux()
@@ -89,7 +101,98 @@ func NewHTTPHandler(service *Service, logger *slog.Logger) http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("/api/v1/webhooks/github", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if config.GitHubWebhookSecret == "" {
+			writeError(w, http.StatusServiceUnavailable, errors.New("github webhook secret not configured"))
+			return
+		}
+		body, err := readBody(r, config.GitHubWebhookMaxBytes)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		signature := r.Header.Get("X-Hub-Signature-256")
+		if signature == "" {
+			signature = r.Header.Get("X-Hub-Signature")
+		}
+		valid, err := github.VerifySignature(config.GitHubWebhookSecret, body, signature)
+		if err != nil || !valid {
+			logger.Warn("github webhook signature rejected", "event", "webhook_signature_invalid", "error", err)
+			writeError(w, http.StatusUnauthorized, errors.New("invalid webhook signature"))
+			return
+		}
+
+		eventType := r.Header.Get("X-GitHub-Event")
+		if eventType == "" {
+			writeError(w, http.StatusBadRequest, errors.New("missing github event header"))
+			return
+		}
+		normalized, triggerRun, err := github.NormalizeEvent(eventType, body)
+		if err != nil {
+			logger.Warn("github webhook normalization failed", "event", "webhook_normalize_failed", "error", err)
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if !triggerRun {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+
+		eventKey, err := github.ComputeEventKey(normalized.RepoID, normalized.CommitSHA, normalized.EventType, normalized.PRNumber)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+
+		runDetails, created, err := service.CreateRunFromTrigger(r.Context(), CreateRunRequest{
+			RepoID:    normalized.RepoID,
+			Ref:       normalized.Ref,
+			CommitSHA: normalized.CommitSHA,
+		}, state.RunTrigger{
+			Provider:  "github",
+			EventKey:  eventKey,
+			EventType: normalized.EventType,
+			RepoID:    normalized.RepoID,
+			RepoOwner: normalized.RepoOwner,
+			RepoName:  normalized.RepoName,
+			PRNumber:  normalized.PRNumber,
+		})
+		if err != nil {
+			logger.Error("github webhook run creation failed", "event", "webhook_run_failed", "error", err)
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		status := http.StatusAccepted
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, map[string]string{
+			"run_id": runDetails.Run.ID,
+			"state":  string(runDetails.Run.State),
+		})
+	})
+
 	return mux
+}
+
+func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return io.ReadAll(r.Body)
+	}
+	limit := maxBytes + 1
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, errors.New("payload too large")
+	}
+	return body, nil
 }
 
 func decodeJSON(r *http.Request, target any) error {

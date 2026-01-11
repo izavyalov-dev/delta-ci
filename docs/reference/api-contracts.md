@@ -98,6 +98,9 @@ POST /api/v1/webhooks/{provider}
 - `4xx` — invalid payload or signature
 - `5xx` — temporary failure (VCS may retry)
 
+**Provider Details**
+- GitHub integration specifics are defined in `reference/vcs-github.md`.
+
 ---
 
 ### Run Management API
@@ -166,6 +169,7 @@ Semantics:
 *	partial updates must be tolerated
 
 VCS-specific details are abstracted behind provider adapters.
+GitHub reporting behavior is documented in `reference/vcs-github.md`.
 
 ## Internal Control Plane APIs
 

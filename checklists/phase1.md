@@ -34,11 +34,11 @@ Correctness, explainability, and safety remain mandatory.
 
 ## Milestone 1.1 — GitHub Integration (Checks + PR Comments)
 
-☐ Implement webhook ingestion with idempotency  
-☐ Normalize push and PR events into run creation  
-☐ Implement Status Reporter for GitHub checks  
-☐ Post PR comment summaries with run results  
-☐ Ensure updates are idempotent and replay-safe  
+☑ Implement webhook ingestion with idempotency  
+☑ Normalize push and PR events into run creation  
+☑ Implement Status Reporter for GitHub checks  
+☑ Post PR comment summaries with run results  
+☑ Ensure updates are idempotent and replay-safe  
 
 Success criteria:
 - duplicate webhooks do not create duplicate runs
