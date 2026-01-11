@@ -81,7 +81,7 @@ It does not define:
    **Owner:** Orchestrator  
    Condition: any required job reaches terminal failure with no retries left
 
-8. `RUNNING -> CANCEL_REQUESTED`  
+8. `RUNNING|QUEUED -> CANCEL_REQUESTED`  
    **Owner:** Orchestrator  
    Trigger: user cancel or superseded run policy
 
@@ -239,6 +239,8 @@ Cancellation is two-phase:
    Orchestrator finalizes jobs as `CANCELED` when:
    - it receives `CancelAck`, or
    - cancel deadline is exceeded (forced cancel)
+
+Queued jobs without an active lease may be finalized immediately after cancellation.
 
 ### Forced Cancel
 

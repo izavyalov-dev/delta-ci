@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
@@ -64,6 +65,8 @@ func main() {
 
 	client := transport.NewHTTPClient(*orchestrator)
 	ctx := context.Background()
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
 	ack := protocol.AckLease{
 		Type:       "AckLease",
@@ -78,30 +81,81 @@ func main() {
 	}
 	logger.Info("lease acknowledged", "event", "lease_acknowledged")
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", firstStep(lease.JobSpec.Steps))
+	cmd := exec.CommandContext(runCtx, "sh", "-c", firstStep(lease.JobSpec.Steps))
 	cmd.Dir = *workdir
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
 
+	heartbeatInterval := time.Duration(lease.HeartbeatIntervalSeconds) * time.Second
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 20 * time.Second
+	}
+
+	var cancelOnce sync.Once
+	cancelSignal := make(chan struct{})
+	signalCancel := func() {
+		cancelOnce.Do(func() {
+			close(cancelSignal)
+			cancelRun()
+		})
+	}
+
+	sendHeartbeat := func(ts time.Time) error {
+		ack, err := client.Heartbeat(ctx, protocol.Heartbeat{
+			Type:     "Heartbeat",
+			LeaseID:  lease.LeaseID,
+			RunnerID: *runnerID,
+			TS:       ts,
+		})
+		if err != nil {
+			return err
+		}
+		if ack.CancelRequested {
+			signalCancel()
+		}
+		return nil
+	}
+
 	start := time.Now().UTC()
-	if err := client.Heartbeat(ctx, protocol.Heartbeat{
-		Type:     "Heartbeat",
-		LeaseID:  lease.LeaseID,
-		RunnerID: *runnerID,
-		TS:       start,
-	}); err != nil {
+	if err := sendHeartbeat(start); err != nil {
 		logger.Error("first heartbeat", "event", "runner_error", "error", err)
 		os.Exit(1)
 	}
 	logger.Debug("heartbeat sent", "event", "lease_heartbeat")
 
+	hbDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbDone:
+				return
+			case <-ticker.C:
+				if err := sendHeartbeat(time.Now().UTC()); err != nil {
+					logger.Error("heartbeat failed", "event", "runner_error", "error", err)
+					signalCancel()
+					return
+				}
+			}
+		}
+	}()
+
 	runnerErr := cmd.Run()
+	close(hbDone)
 	finished := time.Now().UTC()
+
+	canceled := false
+	select {
+	case <-cancelSignal:
+		canceled = true
+	default:
+	}
 
 	status := protocol.CompleteStatusSucceeded
 	exit := 0
 	summary := "succeeded"
-	if runnerErr != nil {
+	if runnerErr != nil && !canceled {
 		status = protocol.CompleteStatusFailed
 		exit = exitCode(runnerErr)
 		summary = runnerErr.Error()
@@ -132,6 +186,27 @@ func main() {
 				logger.Info("log uploaded", "event", "artifact_uploaded", "uri", uri)
 			}
 		}
+	}
+
+	if canceled {
+		if summary == "succeeded" {
+			summary = "canceled"
+		}
+		cancelAck := protocol.CancelAck{
+			Type:        "CancelAck",
+			LeaseID:     lease.LeaseID,
+			RunnerID:    *runnerID,
+			FinalStatus: protocol.CancelFinalStatusCanceled,
+			TS:          finished,
+			Summary:     summary,
+			Artifacts:   artifactsList,
+		}
+		if err := client.CancelAck(ctx, cancelAck); err != nil {
+			logger.Error("cancel ack", "event", "runner_error", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("job canceled", "event", "job_canceled")
+		return
 	}
 
 	complete := protocol.Complete{

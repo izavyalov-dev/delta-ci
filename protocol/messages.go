@@ -71,3 +71,20 @@ type Complete struct {
 	Summary    string         `json:"summary,omitempty"`
 	Artifacts  []ArtifactRef  `json:"artifacts,omitempty"`
 }
+
+type CancelFinalStatus string
+
+const (
+	CancelFinalStatusCanceled CancelFinalStatus = "CANCELED"
+)
+
+// CancelAck is sent by a runner when a cancellation is acknowledged.
+type CancelAck struct {
+	Type        string            `json:"type"` // always "CancelAck"
+	LeaseID     string            `json:"lease_id"`
+	RunnerID    string            `json:"runner_id"`
+	FinalStatus CancelFinalStatus `json:"final_status"`
+	TS          time.Time         `json:"ts"`
+	Artifacts   []ArtifactRef     `json:"artifacts,omitempty"`
+	Summary     string            `json:"summary,omitempty"`
+}

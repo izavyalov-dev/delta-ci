@@ -26,6 +26,9 @@ var runTriggers string
 //go:embed 0006_status_reports.sql
 var statusReports string
 
+//go:embed 0007_run_reruns.sql
+var runReruns string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
@@ -34,4 +37,5 @@ var All = []Migration{
 	{ID: "0004_job_specs", Script: jobSpecs},
 	{ID: "0005_run_triggers", Script: runTriggers},
 	{ID: "0006_status_reports", Script: statusReports},
+	{ID: "0007_run_reruns", Script: runReruns},
 }

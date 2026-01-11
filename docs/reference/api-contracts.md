@@ -156,6 +156,7 @@ POST /api/v1/runs/{run_id}/rerun
 *	creates a new run attempt
 *	previous attempts remain immutable
 *	may optionally filter jobs
+*	idempotent when `Idempotency-Key` header is provided
 
 ## Status Reporting API
 

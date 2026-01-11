@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ErrDuplicateTrigger indicates an idempotency key already exists.
@@ -117,12 +115,4 @@ WHERE provider = $1 AND event_key = $2
 	}
 
 	return s.GetRun(ctx, runID)
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505"
-	}
-	return false
 }

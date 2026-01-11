@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
 	"github.com/izavyalov-dev/delta-ci/internal/vcs/github"
@@ -101,6 +103,28 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("/api/v1/internal/cancel-ack", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var msg protocol.CancelAck
+		if err := decodeJSON(r, &msg); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := service.CancelLease(r.Context(), msg); err != nil {
+			if errors.Is(err, ErrStaleLease) {
+				writeError(w, http.StatusConflict, err)
+				return
+			}
+			logger.Error("cancel ack failed", "event", "cancel_ack_failed", "error", err)
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	mux.HandleFunc("/api/v1/webhooks/github", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -177,6 +201,67 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 		})
 	})
 
+	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		runID, action, ok := parseRunAction(r.URL.Path)
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		switch action {
+		case "cancel":
+			details, err := service.CancelRun(r.Context(), runID)
+			if err != nil {
+				if state.IsTransitionError(err) {
+					writeError(w, http.StatusConflict, err)
+					return
+				}
+				if errors.Is(err, ErrInvalidRunState) {
+					writeError(w, http.StatusConflict, err)
+					return
+				}
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{
+				"run_id": details.Run.ID,
+				"state":  string(details.Run.State),
+			})
+		case "rerun":
+			idempotencyKey := r.Header.Get("Idempotency-Key")
+			if idempotencyKey == "" {
+				writeError(w, http.StatusBadRequest, errors.New("Idempotency-Key header required"))
+				return
+			}
+			details, created, err := service.RerunRun(r.Context(), runID, idempotencyKey)
+			if err != nil {
+				if state.IsTransitionError(err) {
+					writeError(w, http.StatusConflict, err)
+					return
+				}
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			status := http.StatusOK
+			if created {
+				status = http.StatusCreated
+			}
+			writeJSON(w, status, map[string]string{
+				"run_id":         details.Run.ID,
+				"original_run":   runID,
+				"state":          string(details.Run.State),
+				"created":        fmt.Sprintf("%t", created),
+				"idempotencyKey": idempotencyKey,
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
 	return mux
 }
 
@@ -193,6 +278,19 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 		return nil, errors.New("payload too large")
 	}
 	return body, nil
+}
+
+func parseRunAction(path string) (string, string, bool) {
+	path = strings.TrimPrefix(path, "/api/v1/runs/")
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	if parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func decodeJSON(r *http.Request, target any) error {

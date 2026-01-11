@@ -17,6 +17,8 @@ import (
 var (
 	// ErrStaleLease indicates the lease is not active or has expired.
 	ErrStaleLease = errors.New("stale lease")
+	// ErrInvalidRunState indicates the run cannot accept the requested transition.
+	ErrInvalidRunState = errors.New("invalid run state")
 )
 
 // Service wires planner outputs to state transitions and dispatch.
@@ -103,6 +105,100 @@ func (s *Service) CreateRunFromTrigger(ctx context.Context, req CreateRunRequest
 
 	details, err := s.startRun(ctx, run)
 	return details, true, err
+}
+
+// RerunRun creates a new run attempt for an existing run using an idempotency key.
+func (s *Service) RerunRun(ctx context.Context, runID, idempotencyKey string) (RunDetails, bool, error) {
+	if runID == "" || idempotencyKey == "" {
+		return RunDetails{}, false, errors.New("run_id and idempotency_key are required")
+	}
+
+	original, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return RunDetails{}, false, err
+	}
+
+	newRunID := s.ids.RunID()
+	run, created, err := s.store.CreateRunWithRerun(ctx, state.Run{
+		ID:        newRunID,
+		RepoID:    original.RepoID,
+		Ref:       original.Ref,
+		CommitSHA: original.CommitSHA,
+		State:     state.RunStateCreated,
+	}, original.ID, idempotencyKey)
+	if err != nil {
+		return RunDetails{}, false, err
+	}
+	if !created {
+		details, err := s.GetRunDetails(ctx, run.ID)
+		return details, false, err
+	}
+
+	details, err := s.startRun(ctx, run)
+	return details, true, err
+}
+
+// CancelRun transitions a run to cancel requested and propagates to jobs.
+func (s *Service) CancelRun(ctx context.Context, runID string) (RunDetails, error) {
+	if runID == "" {
+		return RunDetails{}, errors.New("run_id is required")
+	}
+
+	run, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return RunDetails{}, err
+	}
+
+	switch run.State {
+	case state.RunStateCancelRequested, state.RunStateCanceled:
+		return s.GetRunDetails(ctx, runID)
+	case state.RunStateSuccess, state.RunStateFailed, state.RunStateTimeout, state.RunStateReported:
+		return RunDetails{}, fmt.Errorf("%w: run %s is already terminal (%s)", ErrInvalidRunState, runID, run.State)
+	}
+
+	if err := s.store.TransitionRunState(ctx, runID, state.RunStateCancelRequested); err != nil {
+		return RunDetails{}, err
+	}
+	s.metrics.IncRun("cancel_requested")
+	s.reportRun(ctx, runID)
+
+	jobs, err := s.store.ListJobsByRun(ctx, runID)
+	if err != nil {
+		return RunDetails{}, err
+	}
+
+	now := time.Now().UTC()
+	for _, job := range jobs {
+		attempt, err := s.store.GetLatestJobAttempt(ctx, job.ID)
+		if err != nil {
+			return RunDetails{}, err
+		}
+		switch job.State {
+		case state.JobStateQueued:
+			if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, state.JobStateCancelRequested); err != nil {
+				return RunDetails{}, err
+			}
+			if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, state.JobStateCanceled); err != nil {
+				return RunDetails{}, err
+			}
+			if err := s.store.MarkJobAttemptCompleted(ctx, attempt.ID, now); err != nil {
+				return RunDetails{}, err
+			}
+			s.metrics.IncJob("canceled")
+		case state.JobStateLeased, state.JobStateStarting, state.JobStateRunning:
+			if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, state.JobStateCancelRequested); err != nil {
+				return RunDetails{}, err
+			}
+		default:
+			continue
+		}
+	}
+
+	if err := s.finalizeCancelIfReady(ctx, runID); err != nil {
+		return RunDetails{}, err
+	}
+
+	return s.GetRunDetails(ctx, runID)
 }
 
 func validateCreateRunRequest(req CreateRunRequest) error {
@@ -301,6 +397,9 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 	if err != nil {
 		return protocol.LeaseGranted{}, err
 	}
+	if isRunTerminal(run.State) || run.State == state.RunStateCancelRequested {
+		return protocol.LeaseGranted{}, fmt.Errorf("run %s is not leasable (%s)", run.ID, run.State)
+	}
 
 	var runnerIDPtr *string
 	if req.RunnerID != "" {
@@ -425,6 +524,14 @@ func (s *Service) AckLease(ctx context.Context, msg protocol.AckLease) error {
 	if attempt.State != state.JobStateStarting {
 		s.metrics.IncJob("starting")
 	}
+
+	run, err := s.store.GetRun(ctx, job.RunID)
+	if err != nil {
+		return err
+	}
+	if run.State == state.RunStateCancelRequested || isRunTerminal(run.State) {
+		return nil
+	}
 	return s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning)
 }
 
@@ -457,22 +564,39 @@ func (s *Service) HandleHeartbeat(ctx context.Context, msg protocol.Heartbeat) (
 		return protocol.HeartbeatAck{}, err
 	}
 
-	transitionedToRunning := attempt.State != state.JobStateRunning
-	if err := s.transitionJobAndAttempt(ctx, attempt.JobID, attempt.ID, state.JobStateRunning); err != nil {
-		return protocol.HeartbeatAck{}, err
-	}
-
 	job, err := s.store.GetJob(ctx, attempt.JobID)
 	if err != nil {
 		return protocol.HeartbeatAck{}, err
+	}
+
+	run, err := s.store.GetRun(ctx, job.RunID)
+	if err != nil {
+		return protocol.HeartbeatAck{}, err
+	}
+	cancelRequested := run.State == state.RunStateCancelRequested || job.State == state.JobStateCancelRequested
+
+	transitionedToRunning := attempt.State != state.JobStateRunning
+	if attempt.State != state.JobStateCancelRequested {
+		if err := s.transitionJobAndAttempt(ctx, attempt.JobID, attempt.ID, state.JobStateRunning); err != nil {
+			return protocol.HeartbeatAck{}, err
+		}
+	} else {
+		transitionedToRunning = false
 	}
 	heartbeatLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
 	heartbeatLogger.Debug("heartbeat received", "event", "lease_heartbeat")
 	if transitionedToRunning {
 		s.metrics.IncJob("running")
 	}
-	if err := s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning); err != nil {
-		return protocol.HeartbeatAck{}, err
+	if !cancelRequested && !isRunTerminal(run.State) {
+		if err := s.store.TransitionRunState(ctx, job.RunID, state.RunStateRunning); err != nil {
+			return protocol.HeartbeatAck{}, err
+		}
+	}
+
+	deadline := 0
+	if cancelRequested {
+		deadline = cancelDeadlineSeconds
 	}
 
 	return protocol.HeartbeatAck{
@@ -480,8 +604,8 @@ func (s *Service) HandleHeartbeat(ctx context.Context, msg protocol.Heartbeat) (
 		LeaseID:               lease.ID,
 		ExtendLease:           true,
 		NewLeaseTTLSeconds:    lease.TTLSeconds,
-		CancelRequested:       false,
-		CancelDeadlineSeconds: 0,
+		CancelRequested:       cancelRequested,
+		CancelDeadlineSeconds: deadline,
 	}, nil
 }
 
@@ -510,6 +634,10 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 		return err
 	}
 	completeLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
+	run, err := s.store.GetRun(ctx, job.RunID)
+	if err != nil {
+		return err
+	}
 
 	// Ensure attempt/job are running before uploading -> terminal state.
 	if attempt.State != state.JobStateRunning && attempt.State != state.JobStateUploading {
@@ -567,11 +695,90 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 		_ = s.store.RecordArtifacts(ctx, attempt.ID, refs)
 	}
 
-	if err := s.finalizeRunIfReady(ctx, job.RunID); err != nil {
-		s.metrics.IncFailure("run_finalize_failed")
-		completeLogger.Error("run finalization failed", "event", "run_finalize_failed", "error", err)
+	if run.State == state.RunStateCancelRequested {
+		if err := s.finalizeCancelIfReady(ctx, job.RunID); err != nil {
+			s.metrics.IncFailure("run_finalize_failed")
+			completeLogger.Error("run finalization failed", "event", "run_finalize_failed", "error", err)
+		}
+	} else {
+		if err := s.finalizeRunIfReady(ctx, job.RunID); err != nil {
+			s.metrics.IncFailure("run_finalize_failed")
+			completeLogger.Error("run finalization failed", "event", "run_finalize_failed", "error", err)
+		}
 	}
 
+	return nil
+}
+
+// CancelLease finalizes an attempt when a runner acknowledges cancellation.
+func (s *Service) CancelLease(ctx context.Context, msg protocol.CancelAck) error {
+	now := msg.TS
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if msg.FinalStatus != protocol.CancelFinalStatusCanceled {
+		return fmt.Errorf("unsupported cancel status %q", msg.FinalStatus)
+	}
+
+	lease, err := s.store.GetLease(ctx, msg.LeaseID)
+	if err != nil {
+		return err
+	}
+	if lease.State != state.LeaseStateActive || lease.ExpiresAt != nil && now.After(*lease.ExpiresAt) {
+		s.metrics.IncFailure("stale_lease")
+		return ErrStaleLease
+	}
+
+	attempt, err := s.store.GetJobAttempt(ctx, lease.JobAttemptID)
+	if err != nil {
+		return err
+	}
+	job, err := s.store.GetJob(ctx, attempt.JobID)
+	if err != nil {
+		return err
+	}
+	if job.State != state.JobStateCancelRequested {
+		return ErrStaleLease
+	}
+
+	cancelLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
+	if err := s.transitionJobAndAttempt(ctx, job.ID, attempt.ID, state.JobStateCanceled); err != nil {
+		if state.IsTransitionError(err) {
+			return ErrStaleLease
+		}
+		return err
+	}
+	s.metrics.IncJob("canceled")
+	s.metrics.IncLease("canceled")
+
+	if err := s.store.MarkJobAttemptCompleted(ctx, attempt.ID, now); err != nil {
+		return err
+	}
+
+	if _, err := s.store.CompleteLease(ctx, lease.ID, now, state.LeaseStateCanceled); err != nil {
+		if state.IsTransitionError(err) {
+			return ErrStaleLease
+		}
+		return err
+	}
+
+	if len(msg.Artifacts) > 0 {
+		refs := make([]state.ArtifactRef, 0, len(msg.Artifacts))
+		for _, artifact := range msg.Artifacts {
+			refs = append(refs, state.ArtifactRef{
+				Type: artifact.Type,
+				URI:  artifact.URI,
+			})
+		}
+		_ = s.store.RecordArtifacts(ctx, attempt.ID, refs)
+	}
+
+	if err := s.finalizeCancelIfReady(ctx, job.RunID); err != nil {
+		s.metrics.IncFailure("run_finalize_failed")
+		cancelLogger.Error("run cancel finalization failed", "event", "run_finalize_failed", "error", err)
+	}
+
+	cancelLogger.Info("job canceled", "event", "job_canceled")
 	return nil
 }
 
@@ -600,6 +807,8 @@ func jobMetricState(stateValue state.JobState) string {
 		return "other"
 	}
 }
+
+const cancelDeadlineSeconds = 30
 
 func (s *Service) finalizeRunIfReady(ctx context.Context, runID string) error {
 	run, err := s.store.GetRun(ctx, runID)
@@ -647,6 +856,45 @@ func (s *Service) finalizeRunIfReady(ctx context.Context, runID string) error {
 	}
 
 	return nil
+}
+
+func (s *Service) finalizeCancelIfReady(ctx context.Context, runID string) error {
+	run, err := s.store.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run.State != state.RunStateCancelRequested {
+		return nil
+	}
+
+	jobs, err := s.store.ListJobsByRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+
+	for _, job := range jobs {
+		switch job.State {
+		case state.JobStateQueued, state.JobStateLeased, state.JobStateStarting, state.JobStateRunning, state.JobStateCancelRequested:
+			return nil
+		}
+	}
+
+	if err := s.store.TransitionRunState(ctx, runID, state.RunStateCanceled); err != nil {
+		return err
+	}
+	s.metrics.IncRun("canceled")
+	s.logger.Info("run canceled", "event", "run_canceled", "run_id", runID)
+	s.reportRun(ctx, runID)
+	return nil
+}
+
+func isRunTerminal(stateValue state.RunState) bool {
+	switch stateValue {
+	case state.RunStateSuccess, state.RunStateFailed, state.RunStateCanceled, state.RunStateTimeout, state.RunStateReported:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) failRun(ctx context.Context, runID string, logger *slog.Logger, reason string, cause error) error {

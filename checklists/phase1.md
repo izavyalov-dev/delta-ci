@@ -49,11 +49,11 @@ Success criteria:
 
 ## Milestone 1.2 — Run Management (Rerun + Cancel)
 
-☐ Implement run cancel API  
-☐ Implement run rerun API  
-☐ Propagate cancel to active jobs  
-☐ Enforce state machine transitions for cancel/rerun  
-☐ Surface cancel/rerun in GitHub comments or checks  
+☑ Implement run cancel API  
+☑ Implement run rerun API  
+☑ Propagate cancel to active jobs  
+☑ Enforce state machine transitions for cancel/rerun  
+☑ Surface cancel/rerun in GitHub comments or checks  
 
 Success criteria:
 - cancel moves run to CANCEL_REQUESTED and finalizes correctly

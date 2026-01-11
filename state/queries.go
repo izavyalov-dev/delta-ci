@@ -202,6 +202,38 @@ WHERE id = $1
 	return attempt, nil
 }
 
+// GetLatestJobAttempt returns the most recent attempt for a job.
+func (s *Store) GetLatestJobAttempt(ctx context.Context, jobID string) (JobAttempt, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, job_id, attempt_number, state, lease_id, created_at, updated_at, started_at, completed_at
+FROM job_attempts
+WHERE job_id = $1
+ORDER BY attempt_number DESC
+LIMIT 1
+`, jobID)
+
+	var attempt JobAttempt
+	var leaseID sql.NullString
+	var startedAt sql.NullTime
+	var completedAt sql.NullTime
+	if err := row.Scan(&attempt.ID, &attempt.JobID, &attempt.AttemptNumber, &attempt.State, &leaseID, &attempt.CreatedAt, &attempt.UpdatedAt, &startedAt, &completedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return JobAttempt{}, fmt.Errorf("%w: job attempt %s", ErrNotFound, jobID)
+		}
+		return JobAttempt{}, err
+	}
+	if leaseID.Valid {
+		attempt.LeaseID = &leaseID.String
+	}
+	if startedAt.Valid {
+		attempt.StartedAt = &startedAt.Time
+	}
+	if completedAt.Valid {
+		attempt.CompletedAt = &completedAt.Time
+	}
+	return attempt, nil
+}
+
 // CreateLease inserts a new lease record.
 func (s *Store) CreateLease(ctx context.Context, lease Lease) (Lease, error) {
 	if lease.State == "" {
