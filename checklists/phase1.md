@@ -63,11 +63,11 @@ Success criteria:
 
 ## Milestone 1.3 — Planner v1 (Diff-Aware, Conservative)
 
-☐ Implement discovery inputs (build files, README/CONTRIBUTING)  
-☐ Implement minimal impact analysis from diff paths  
-☐ Construct an explainable plan with required vs allow-failure jobs  
-☐ Provide explicit “why this ran” reasoning  
-☐ Fallback to “run everything” on uncertainty  
+☑ Implement discovery inputs (build files, README/CONTRIBUTING)  
+☑ Implement minimal impact analysis from diff paths  
+☑ Construct an explainable plan with required vs allow-failure jobs  
+☑ Provide explicit “why this ran” reasoning  
+☑ Fallback to “run everything” on uncertainty  
 
 Success criteria:
 - planner output is deterministic for the same inputs

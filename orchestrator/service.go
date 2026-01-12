@@ -239,6 +239,9 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 		}
 		return RunDetails{}, errors.New("planner returned no jobs")
 	}
+	if planResult.Explain != "" {
+		runLogger.Info("plan generated", "event", "plan_generated", "explain", planResult.Explain)
+	}
 
 	jobDetails := make([]JobDetail, 0, len(planResult.Jobs))
 	for _, planned := range planResult.Jobs {
@@ -254,7 +257,11 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 			return RunDetails{}, fmt.Errorf("create job %s: %w", planned.Name, err)
 		}
 		jobLogger := observability.WithJob(runLogger, job.ID)
-		jobLogger.Info("job created", "event", "job_created", "name", job.Name, "required", job.Required)
+		jobFields := []any{"event", "job_created", "name", job.Name, "required", job.Required}
+		if planned.Reason != "" {
+			jobFields = append(jobFields, "reason", planned.Reason)
+		}
+		jobLogger.Info("job created", jobFields...)
 		s.metrics.IncJob("created")
 
 		spec := planned.Spec
