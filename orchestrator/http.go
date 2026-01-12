@@ -202,12 +202,35 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 	})
 
 	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		runID, action, ok := parseRunPath(r.URL.Path)
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			if action != "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			details, err := service.GetRunDetails(r.Context(), runID)
+			if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					writeError(w, http.StatusNotFound, err)
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, details)
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		runID, action, ok := parseRunAction(r.URL.Path)
-		if !ok {
+		if action == "" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -280,17 +303,24 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 	return body, nil
 }
 
-func parseRunAction(path string) (string, string, bool) {
+func parseRunPath(path string) (string, string, bool) {
 	path = strings.TrimPrefix(path, "/api/v1/runs/")
 	path = strings.Trim(path, "/")
 	parts := strings.Split(path, "/")
-	if len(parts) != 2 {
+	switch len(parts) {
+	case 1:
+		if parts[0] == "" {
+			return "", "", false
+		}
+		return parts[0], "", true
+	case 2:
+		if parts[0] == "" || parts[1] == "" {
+			return "", "", false
+		}
+		return parts[0], parts[1], true
+	default:
 		return "", "", false
 	}
-	if parts[0] == "" || parts[1] == "" {
-		return "", "", false
-	}
-	return parts[0], parts[1], true
 }
 
 func decodeJSON(r *http.Request, target any) error {

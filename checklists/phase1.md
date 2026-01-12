@@ -77,10 +77,10 @@ Success criteria:
 
 ## Milestone 1.4 — Artifact and Log Retrieval
 
-☐ Store logs and artifacts in external storage  
-☐ Persist artifact references in control plane  
-☐ Expose APIs to fetch log and artifact URLs  
-☐ Ensure logs are treated as untrusted input  
+☑ Store logs and artifacts in external storage  
+☑ Persist artifact references in control plane  
+☑ Expose APIs to fetch log and artifact URLs  
+☑ Ensure logs are treated as untrusted input  
 
 Success criteria:
 - run/job APIs provide links to logs and artifacts

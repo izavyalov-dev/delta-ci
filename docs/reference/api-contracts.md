@@ -137,6 +137,56 @@ Returns:
 *	timestamps
 *	links to artifacts
 
+Example response:
+```json
+{
+  "run": {
+    "id": "run_456",
+    "repo_id": "repo_123",
+    "ref": "refs/heads/main",
+    "commit_sha": "abc123",
+    "state": "SUCCEEDED",
+    "created_at": "2026-01-12T08:00:00Z",
+    "updated_at": "2026-01-12T08:05:00Z"
+  },
+  "jobs": [
+    {
+      "job": {
+        "id": "job_123",
+        "run_id": "run_456",
+        "name": "build",
+        "required": true,
+        "state": "SUCCEEDED",
+        "attempt_count": 1,
+        "created_at": "2026-01-12T08:00:00Z",
+        "updated_at": "2026-01-12T08:05:00Z"
+      },
+      "attempts": [
+        {
+          "id": "attempt_abc",
+          "job_id": "job_123",
+          "attempt_number": 1,
+          "state": "SUCCEEDED",
+          "created_at": "2026-01-12T08:00:00Z",
+          "updated_at": "2026-01-12T08:05:00Z",
+          "started_at": "2026-01-12T08:01:00Z",
+          "completed_at": "2026-01-12T08:05:00Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 1,
+          "job_attempt_id": "attempt_abc",
+          "type": "log",
+          "uri": "s3://delta-ci-artifacts/runs/run_456/jobs/job_123/log.txt",
+          "created_at": "2026-01-12T08:05:00Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ### Cancel Run
 ```
 POST /api/v1/runs/{run_id}/cancel
