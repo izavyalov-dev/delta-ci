@@ -28,12 +28,13 @@ type Service struct {
 	dispatcher Dispatcher
 	ids        IDGenerator
 	reporter   StatusReporter
+	analyzer   FailureAnalyzer
 	logger     *slog.Logger
 	metrics    *observability.Metrics
 }
 
 // NewService constructs an orchestrator service with sensible defaults.
-func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator, reporter StatusReporter) *Service {
+func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator, reporter StatusReporter, analyzer FailureAnalyzer) *Service {
 	if plan == nil {
 		plan = planner.StaticPlanner{}
 	}
@@ -46,6 +47,9 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 	if reporter == nil {
 		reporter = NoopStatusReporter{}
 	}
+	if analyzer == nil {
+		analyzer = NewRuleBasedFailureAnalyzer()
+	}
 	logger := observability.NewLogger("orchestrator")
 	metrics := observability.NewMetrics(nil)
 	return &Service{
@@ -54,6 +58,7 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 		dispatcher: dispatcher,
 		ids:        ids,
 		reporter:   reporter,
+		analyzer:   analyzer,
 		logger:     logger,
 		metrics:    metrics,
 	}
@@ -313,9 +318,10 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 		}
 
 		jobDetails = append(jobDetails, JobDetail{
-			Job:       job,
-			Attempts:  []state.JobAttempt{attempt},
-			Artifacts: nil,
+			Job:                 job,
+			Attempts:            []state.JobAttempt{attempt},
+			Artifacts:           nil,
+			FailureExplanations: nil,
 		})
 	}
 
@@ -362,10 +368,16 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 			return RunDetails{}, err
 		}
 
+		failureExplanations, err := s.store.ListFailureExplanationsByJob(ctx, job.ID)
+		if err != nil {
+			return RunDetails{}, err
+		}
+
 		jobDetails = append(jobDetails, JobDetail{
-			Job:       job,
-			Attempts:  attempts,
-			Artifacts: artifacts,
+			Job:                 job,
+			Attempts:            attempts,
+			Artifacts:           artifacts,
+			FailureExplanations: failureExplanations,
 		})
 	}
 
@@ -690,16 +702,21 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 		return err
 	}
 
+	var artifactRefs []state.ArtifactRef
 	if len(msg.Artifacts) > 0 {
-		refs := make([]state.ArtifactRef, 0, len(msg.Artifacts))
+		artifactRefs = make([]state.ArtifactRef, 0, len(msg.Artifacts))
 		for _, artifact := range msg.Artifacts {
-			refs = append(refs, state.ArtifactRef{
+			artifactRefs = append(artifactRefs, state.ArtifactRef{
 				Type: artifact.Type,
 				URI:  artifact.URI,
 			})
 		}
 		// Artifact references are best-effort; job completion must not be blocked.
-		_ = s.store.RecordArtifacts(ctx, attempt.ID, refs)
+		_ = s.store.RecordArtifacts(ctx, attempt.ID, artifactRefs)
+	}
+
+	if target == state.JobStateFailed {
+		s.recordFailureExplanation(ctx, job, attempt, msg, artifactRefs)
 	}
 
 	if run.State == state.RunStateCancelRequested {
@@ -787,6 +804,36 @@ func (s *Service) CancelLease(ctx context.Context, msg protocol.CancelAck) error
 
 	cancelLogger.Info("job canceled", "event", "job_canceled")
 	return nil
+}
+
+func (s *Service) recordFailureExplanation(ctx context.Context, job state.Job, attempt state.JobAttempt, msg protocol.Complete, artifacts []state.ArtifactRef) {
+	if s.analyzer == nil {
+		return
+	}
+	explanation, err := s.analyzer.Analyze(ctx, FailureInput{
+		RunID:     job.RunID,
+		JobID:     job.ID,
+		JobName:   job.Name,
+		AttemptID: attempt.ID,
+		Status:    msg.Status,
+		ExitCode:  msg.ExitCode,
+		Summary:   msg.Summary,
+		Artifacts: artifacts,
+	})
+	if err != nil {
+		s.metrics.IncFailure("failure_analysis_failed")
+		s.logger.Error("failure analysis failed", "event", "failure_analysis_failed", "job_id", job.ID, "attempt_id", attempt.ID, "error", err)
+		return
+	}
+	if explanation == nil {
+		return
+	}
+	if err := s.store.RecordFailureExplanation(ctx, *explanation); err != nil {
+		s.metrics.IncFailure("failure_analysis_failed")
+		s.logger.Error("failure explanation persist failed", "event", "failure_explanation_failed", "job_id", job.ID, "attempt_id", attempt.ID, "error", err)
+		return
+	}
+	s.logger.Info("failure explanation recorded", "event", "failure_explanation_recorded", "job_id", job.ID, "attempt_id", attempt.ID, "category", explanation.Category, "confidence", explanation.Confidence)
 }
 
 func (s *Service) transitionJobAndAttempt(ctx context.Context, jobID, attemptID string, target state.JobState) error {

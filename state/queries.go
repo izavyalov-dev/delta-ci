@@ -384,3 +384,90 @@ ORDER BY a.created_at ASC, a.id ASC
 
 	return artifacts, rows.Err()
 }
+
+// RecordFailureExplanation persists a failure explanation for a job attempt.
+func (s *Store) RecordFailureExplanation(ctx context.Context, explanation FailureExplanation) error {
+	if explanation.JobAttemptID == "" {
+		return errors.New("job attempt id required")
+	}
+	if explanation.Category == "" {
+		return errors.New("failure category required")
+	}
+	if explanation.Summary == "" {
+		return errors.New("failure summary required")
+	}
+	if explanation.Confidence == "" {
+		explanation.Confidence = FailureConfidenceLow
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO job_failure_explanations (job_attempt_id, category, summary, confidence, details)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (job_attempt_id)
+DO UPDATE SET category = EXCLUDED.category,
+              summary = EXCLUDED.summary,
+              confidence = EXCLUDED.confidence,
+              details = EXCLUDED.details,
+              created_at = NOW()
+`, explanation.JobAttemptID, explanation.Category, explanation.Summary, explanation.Confidence, nullableString(explanation.Details))
+	return err
+}
+
+// GetFailureExplanationByAttempt fetches a failure explanation for a job attempt.
+func (s *Store) GetFailureExplanationByAttempt(ctx context.Context, attemptID string) (FailureExplanation, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, job_attempt_id, category, summary, confidence, details, created_at
+FROM job_failure_explanations
+WHERE job_attempt_id = $1
+`, attemptID)
+
+	var explanation FailureExplanation
+	var details sql.NullString
+	if err := row.Scan(&explanation.ID, &explanation.JobAttemptID, &explanation.Category, &explanation.Summary, &explanation.Confidence, &details, &explanation.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return FailureExplanation{}, fmt.Errorf("%w: failure explanation for attempt %s", ErrNotFound, attemptID)
+		}
+		return FailureExplanation{}, err
+	}
+	if details.Valid {
+		explanation.Details = details.String
+	}
+	return explanation, nil
+}
+
+// ListFailureExplanationsByJob returns failure explanations for a job.
+func (s *Store) ListFailureExplanationsByJob(ctx context.Context, jobID string) ([]FailureExplanation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT e.id, e.job_attempt_id, e.category, e.summary, e.confidence, e.details, e.created_at
+FROM job_failure_explanations e
+JOIN job_attempts ja ON ja.id = e.job_attempt_id
+WHERE ja.job_id = $1
+ORDER BY e.created_at DESC, e.id DESC
+`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var explanations []FailureExplanation
+	for rows.Next() {
+		var explanation FailureExplanation
+		var details sql.NullString
+		if err := rows.Scan(&explanation.ID, &explanation.JobAttemptID, &explanation.Category, &explanation.Summary, &explanation.Confidence, &details, &explanation.CreatedAt); err != nil {
+			return nil, err
+		}
+		if details.Valid {
+			explanation.Details = details.String
+		}
+		explanations = append(explanations, explanation)
+	}
+
+	return explanations, rows.Err()
+}
+
+func nullableString(value string) sql.NullString {
+	if value == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: value, Valid: true}
+}

@@ -26,7 +26,8 @@ type RunDetails struct {
 
 // JobDetail presents a job alongside its attempts.
 type JobDetail struct {
-	Job       state.Job          `json:"job"`
-	Attempts  []state.JobAttempt `json:"attempts"`
-	Artifacts []state.Artifact   `json:"artifacts"`
+	Job                 state.Job                  `json:"job"`
+	Attempts            []state.JobAttempt         `json:"attempts"`
+	Artifacts           []state.Artifact           `json:"artifacts"`
+	FailureExplanations []state.FailureExplanation `json:"failure_explanations"`
 }

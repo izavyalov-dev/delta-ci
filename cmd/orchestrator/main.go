@@ -86,7 +86,7 @@ func runServe(args []string) error {
 
 	reporter := buildGitHubReporter(store, *githubToken, *githubAPIURL, *githubCheckName)
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter)
+	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
 		GitHubWebhookSecret: *githubWebhookSecret,
 	})
@@ -142,7 +142,7 @@ func runDogfood(args []string) error {
 
 	reporter := buildGitHubReporter(store, *githubToken, *githubAPIURL, *githubCheckName)
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter)
+	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{})
 
 	server, baseURL, err := startServer(handler, *listen)
@@ -279,7 +279,7 @@ func runWorker(args []string) error {
 	}
 
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil)
+	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, nil)
 	logger := observability.NewLogger("worker")
 
 	if err := os.MkdirAll(*logDir, 0o755); err != nil {

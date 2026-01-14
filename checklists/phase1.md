@@ -90,11 +90,11 @@ Success criteria:
 
 ## Milestone 1.5 — Failure Explanations (Rule-Based First)
 
-☐ Implement rule-based failure classification  
-☐ Generate a concise failure explanation summary  
-☐ Ensure inputs are sanitized and size-bounded  
-☐ Provide links to relevant logs and artifacts  
-☐ Add AI hook points but keep them disabled by default  
+☑ Implement rule-based failure classification  
+☑ Generate a concise failure explanation summary  
+☑ Ensure inputs are sanitized and size-bounded  
+☑ Provide links to relevant logs and artifacts  
+☑ Add AI hook points but keep them disabled by default  
 
 Success criteria:
 - explanations are based on observable data only

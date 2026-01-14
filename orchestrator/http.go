@@ -347,6 +347,9 @@ func sanitizeRunDetails(details RunDetails) RunDetails {
 		if details.Jobs[i].Artifacts == nil {
 			details.Jobs[i].Artifacts = []state.Artifact{}
 		}
+		if details.Jobs[i].FailureExplanations == nil {
+			details.Jobs[i].FailureExplanations = []state.FailureExplanation{}
+		}
 	}
 	return details
 }

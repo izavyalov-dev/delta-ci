@@ -141,6 +141,27 @@ Classification confidence must be surfaced to the user.
 
 ---
 
+## Phase 1 Rule Set
+
+Phase 1 uses a minimal, deterministic rule set based on:
+- job name
+- exit code
+- sanitized runner summary
+- artifact metadata (URIs only)
+
+Rules (in order):
+- timeouts, OOM, disk full, killed signals → **INFRA** (medium/high confidence)
+- network/connection errors → **INFRA** (high confidence)
+- command not found / missing executable / permission denied → **TOOLING** (medium/high confidence)
+- job name includes `lint`/`vet` → **USER** (medium confidence)
+- job name includes `test` → **USER** (medium confidence)
+- job name includes `build` → **USER** (medium confidence)
+- otherwise → **USER** (low confidence)
+
+Logs are never fetched for analysis in Phase 1. Only artifact URIs are referenced.
+
+---
+
 ## Explanation Generation
 
 Failure explanations must:

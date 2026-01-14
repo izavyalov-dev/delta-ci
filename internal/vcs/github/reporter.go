@@ -70,15 +70,24 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 		return err
 	}
 	jobArtifacts := make(map[string][]state.Artifact, len(jobs))
+	jobFailures := make(map[string]*state.FailureExplanation, len(jobs))
 	for _, job := range jobs {
 		artifacts, err := r.store.ListArtifactsByJob(ctx, job.ID)
 		if err != nil {
 			return err
 		}
 		jobArtifacts[job.ID] = artifacts
+
+		explanations, err := r.store.ListFailureExplanationsByJob(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		if len(explanations) > 0 {
+			jobFailures[job.ID] = &explanations[0]
+		}
 	}
 
-	title, summary := buildSummary(run, jobs, jobArtifacts)
+	title, summary := buildSummary(run, jobs, jobArtifacts, jobFailures)
 	checkReq := buildCheckRun(r.checkName, run, title, summary)
 
 	checkRunID := report.CheckRunID
@@ -213,7 +222,7 @@ func isReportableTerminal(stateValue state.RunState) bool {
 	}
 }
 
-func buildSummary(run state.Run, jobs []state.Job, artifacts map[string][]state.Artifact) (string, string) {
+func buildSummary(run state.Run, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation) (string, string) {
 	title := fmt.Sprintf("Delta CI: %s", run.State)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run `%s`\n\n", run.ID)
@@ -231,6 +240,11 @@ func buildSummary(run state.Run, jobs []state.Job, artifacts map[string][]state.
 			required = "optional"
 		}
 		fmt.Fprintf(&b, "- %s (%s): `%s`\n", sanitize(job.Name), required, job.State)
+		if job.State == state.JobStateFailed || job.State == state.JobStateTimedOut {
+			if failure := failures[job.ID]; failure != nil {
+				fmt.Fprintf(&b, "  Failure: %s (%s/%s)\n", sanitize(failure.Summary), sanitize(string(failure.Category)), sanitize(string(failure.Confidence)))
+			}
+		}
 		arts := artifacts[job.ID]
 		if len(arts) == 0 {
 			continue

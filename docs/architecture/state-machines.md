@@ -297,6 +297,7 @@ Orchestrator must treat these operations as idempotent:
 - receiving duplicate VCS webhooks for the same commit/PR event
 - receiving duplicate runner messages (heartbeats, completes) due to retries
 - re-processing queue deliveries (at-least-once semantics)
+- dropping dispatch queue entries tied to terminal or cancel-requested runs
 
 Recommended strategy:
 - use `(lease_id, message_type, sequence_no)` or `(lease_id, ts)` + monotonic checks

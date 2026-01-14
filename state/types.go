@@ -69,6 +69,36 @@ type Artifact struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+type FailureCategory string
+
+const (
+	FailureCategoryUser     FailureCategory = "USER"
+	FailureCategoryInfra    FailureCategory = "INFRA"
+	FailureCategoryTooling  FailureCategory = "TOOLING"
+	FailureCategoryFlaky    FailureCategory = "FLAKY"
+	FailureCategoryCanceled FailureCategory = "CANCELED"
+	FailureCategoryUnknown  FailureCategory = "UNKNOWN"
+)
+
+type FailureConfidence string
+
+const (
+	FailureConfidenceLow    FailureConfidence = "LOW"
+	FailureConfidenceMedium FailureConfidence = "MEDIUM"
+	FailureConfidenceHigh   FailureConfidence = "HIGH"
+)
+
+// FailureExplanation summarizes why a job attempt failed.
+type FailureExplanation struct {
+	ID           int64             `json:"id"`
+	JobAttemptID string            `json:"job_attempt_id"`
+	Category     FailureCategory   `json:"category"`
+	Summary      string            `json:"summary"`
+	Confidence   FailureConfidence `json:"confidence"`
+	Details      string            `json:"details,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+}
+
 // RunTrigger captures webhook metadata for idempotency and reporting.
 type RunTrigger struct {
 	RunID     string    `json:"run_id"`
