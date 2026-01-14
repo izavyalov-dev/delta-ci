@@ -136,6 +136,8 @@ Returns:
 *	jobs and attempts
 *	timestamps
 *	links to artifacts
+*	lease IDs are never returned; artifacts is an array (empty when none)
+*	artifact URIs are untrusted input and must be sanitized before use
 
 Example response:
 ```json

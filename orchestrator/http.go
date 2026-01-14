@@ -222,7 +222,7 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, details)
+			writeJSON(w, http.StatusOK, sanitizeRunDetails(details))
 			return
 		}
 
@@ -337,4 +337,16 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func sanitizeRunDetails(details RunDetails) RunDetails {
+	for i := range details.Jobs {
+		for j := range details.Jobs[i].Attempts {
+			details.Jobs[i].Attempts[j].LeaseID = nil
+		}
+		if details.Jobs[i].Artifacts == nil {
+			details.Jobs[i].Artifacts = []state.Artifact{}
+		}
+	}
+	return details
 }
