@@ -170,6 +170,9 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 
 func buildCheckRun(name string, run state.Run, title, summary string) CheckRunRequest {
 	status, conclusion := mapRunToCheck(run.State)
+	if status == "completed" && conclusion == "" {
+		conclusion = "neutral"
+	}
 	req := CheckRunRequest{
 		Name:    name,
 		HeadSHA: run.CommitSHA,
