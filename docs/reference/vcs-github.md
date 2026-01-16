@@ -28,7 +28,7 @@ Optional:
 - GitHub App auth (preferred when checks API requires it):
   - `-github-app-id` or `GITHUB_APP_ID`
   - `-github-app-installation-id` or `GITHUB_APP_INSTALLATION_ID`
-  - `-github-app-private-key-file` or `GITHUB_APP_PRIVATE_KEY_FILE`
+  - `-github-app-private-key-file` or `GITHUB_APP_PRIVATE_KEY_FILE` 
   - `-github-app-private-key` or `GITHUB_APP_PRIVATE_KEY` (PEM, supports `\n`)
 
 ---
