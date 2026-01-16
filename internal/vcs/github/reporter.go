@@ -98,6 +98,7 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 	if checkRunID == nil {
 		resp, err := r.client.CreateCheckRun(ctx, trigger.RepoOwner, trigger.RepoName, checkReq)
 		if err != nil {
+			r.logger.Warn("github check run create failed", "event", "github_check_create_failed", "run_id", run.ID, "state", run.State, "status", checkReq.Status, "conclusion", checkReq.Conclusion, "error", err)
 			return err
 		}
 		value := fmt.Sprintf("%d", resp.ID)
@@ -108,11 +109,13 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 			if isNotFound(err) {
 				resp, createErr := r.client.CreateCheckRun(ctx, trigger.RepoOwner, trigger.RepoName, checkReq)
 				if createErr != nil {
+					r.logger.Warn("github check run create failed", "event", "github_check_create_failed", "run_id", run.ID, "state", run.State, "status", checkReq.Status, "conclusion", checkReq.Conclusion, "error", createErr)
 					return createErr
 				}
 				value := fmt.Sprintf("%d", resp.ID)
 				checkRunID = &value
 			} else {
+				r.logger.Warn("github check run update failed", "event", "github_check_update_failed", "run_id", run.ID, "state", run.State, "status", checkReq.Status, "conclusion", checkReq.Conclusion, "error", err)
 				return err
 			}
 		}
