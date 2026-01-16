@@ -64,6 +64,10 @@ func runServe(args []string) error {
 	listen := flags.String("listen", ":8080", "Listen address")
 	githubWebhookSecret := flags.String("github-webhook-secret", os.Getenv("GITHUB_WEBHOOK_SECRET"), "GitHub webhook secret")
 	githubToken := flags.String("github-token", os.Getenv("GITHUB_TOKEN"), "GitHub API token")
+	githubAppID := flags.String("github-app-id", os.Getenv("GITHUB_APP_ID"), "GitHub App ID")
+	githubAppInstallationID := flags.String("github-app-installation-id", os.Getenv("GITHUB_APP_INSTALLATION_ID"), "GitHub App installation ID")
+	githubAppPrivateKey := flags.String("github-app-private-key", os.Getenv("GITHUB_APP_PRIVATE_KEY"), "GitHub App private key PEM")
+	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
 	_ = flags.Parse(args)
@@ -84,7 +88,10 @@ func runServe(args []string) error {
 		return err
 	}
 
-	reporter := buildGitHubReporter(store, *githubToken, *githubAPIURL, *githubCheckName)
+	reporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
+	if err != nil {
+		return err
+	}
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
@@ -120,6 +127,10 @@ func runDogfood(args []string) error {
 	visibilityTimeout := flags.Duration("visibility-timeout", 30*time.Second, "Queue visibility timeout")
 	continueOnRunnerError := flags.Bool("continue-on-runner-error", false, "Keep the dogfood loop running after a runner error")
 	githubToken := flags.String("github-token", os.Getenv("GITHUB_TOKEN"), "GitHub API token")
+	githubAppID := flags.String("github-app-id", os.Getenv("GITHUB_APP_ID"), "GitHub App ID")
+	githubAppInstallationID := flags.String("github-app-installation-id", os.Getenv("GITHUB_APP_INSTALLATION_ID"), "GitHub App installation ID")
+	githubAppPrivateKey := flags.String("github-app-private-key", os.Getenv("GITHUB_APP_PRIVATE_KEY"), "GitHub App private key PEM")
+	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
 	_ = flags.Parse(args)
@@ -140,7 +151,10 @@ func runDogfood(args []string) error {
 		return err
 	}
 
-	reporter := buildGitHubReporter(store, *githubToken, *githubAPIURL, *githubCheckName)
+	reporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
+	if err != nil {
+		return err
+	}
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{})
@@ -229,15 +243,46 @@ func runDogfood(args []string) error {
 	return nil
 }
 
-func buildGitHubReporter(store *state.Store, token, apiURL, checkName string) orchestrator.StatusReporter {
+func buildGitHubReporter(store *state.Store, token, appID, appInstallationID, appPrivateKey, appPrivateKeyFile, apiURL, checkName string) (orchestrator.StatusReporter, error) {
+	if appID != "" || appInstallationID != "" || appPrivateKey != "" || appPrivateKeyFile != "" {
+		if appID == "" || appInstallationID == "" {
+			return nil, errors.New("github app id and installation id required")
+		}
+		key, err := loadGitHubAppKey(appPrivateKey, appPrivateKeyFile)
+		if err != nil {
+			return nil, err
+		}
+		client := github.NewAppClient(nil)
+		if apiURL != "" {
+			client.BaseURL = apiURL
+		}
+		provider, err := github.NewAppTokenProvider(appID, appInstallationID, key, client.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		client.TokenProvider = provider
+		return github.NewReporter(store, client, observability.NewLogger("status.github"), checkName), nil
+	}
+
 	if token == "" {
-		return orchestrator.NoopStatusReporter{}
+		return orchestrator.NoopStatusReporter{}, nil
 	}
 	client := github.NewClient(token)
 	if apiURL != "" {
 		client.BaseURL = apiURL
 	}
-	return github.NewReporter(store, client, observability.NewLogger("status.github"), checkName)
+	return github.NewReporter(store, client, observability.NewLogger("status.github"), checkName), nil
+}
+
+func loadGitHubAppKey(rawKey, keyFile string) ([]byte, error) {
+	if keyFile != "" {
+		return os.ReadFile(keyFile)
+	}
+	if rawKey == "" {
+		return nil, errors.New("github app private key required")
+	}
+	rawKey = strings.ReplaceAll(rawKey, "\\n", "\n")
+	return []byte(rawKey), nil
 }
 
 func runWorker(args []string) error {

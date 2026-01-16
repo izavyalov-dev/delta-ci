@@ -26,10 +26,11 @@ func (e *APIError) Error() string {
 
 // Client is a minimal GitHub API client for checks and comments.
 type Client struct {
-	BaseURL    string
-	Token      string
-	HTTPClient *http.Client
-	UserAgent  string
+	BaseURL       string
+	Token         string
+	TokenProvider TokenProvider
+	HTTPClient    *http.Client
+	UserAgent     string
 }
 
 // NewClient constructs a GitHub client.
@@ -39,6 +40,16 @@ func NewClient(token string) *Client {
 		Token:      token,
 		HTTPClient: &http.Client{Timeout: 10 * time.Second},
 		UserAgent:  "delta-ci",
+	}
+}
+
+// NewAppClient constructs a GitHub client that uses a token provider.
+func NewAppClient(provider TokenProvider) *Client {
+	return &Client{
+		BaseURL:       defaultBaseURL,
+		TokenProvider: provider,
+		HTTPClient:    &http.Client{Timeout: 10 * time.Second},
+		UserAgent:     "delta-ci",
 	}
 }
 
@@ -111,7 +122,15 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, o
 	if c == nil {
 		return errors.New("github client is nil")
 	}
-	if c.Token == "" {
+	token := c.Token
+	if c.TokenProvider != nil {
+		var err error
+		token, err = c.TokenProvider.Token(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if token == "" {
 		return errors.New("github token missing")
 	}
 
@@ -130,7 +149,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload any, o
 		return err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", c.UserAgent)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")

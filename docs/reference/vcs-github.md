@@ -20,11 +20,16 @@ Required for webhooks:
 - `-github-webhook-secret` or `GITHUB_WEBHOOK_SECRET`
 
 Required for status reporting:
-- `-github-token` or `GITHUB_TOKEN`
+- `-github-token` or `GITHUB_TOKEN`, or GitHub App credentials (see below)
 
 Optional:
 - `-github-api-url` or `GITHUB_API_URL` (default: `https://api.github.com`)
 - `-github-check-name` or `GITHUB_CHECK_NAME` (default: `delta-ci`)
+- GitHub App auth (preferred when checks API requires it):
+  - `-github-app-id` or `GITHUB_APP_ID`
+  - `-github-app-installation-id` or `GITHUB_APP_INSTALLATION_ID`
+  - `-github-app-private-key-file` or `GITHUB_APP_PRIVATE_KEY_FILE`
+  - `-github-app-private-key` or `GITHUB_APP_PRIVATE_KEY` (PEM, supports `\n`)
 
 ---
 
@@ -106,6 +111,12 @@ PR comments are posted or updated **only on terminal states**:
 - `PLAN_FAILED`
 
 Comments are updated in-place for the same run.
+
+### Authentication Notes
+
+Some GitHub orgs require **GitHub App** authentication to create check runs.
+If you see errors like `"You must authenticate via a GitHub App"`, configure
+the app credentials listed above and restart the orchestrator.
 
 ---
 
