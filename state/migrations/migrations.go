@@ -20,10 +20,26 @@ var artifacts string
 //go:embed 0004_job_specs.sql
 var jobSpecs string
 
+//go:embed 0005_run_triggers.sql
+var runTriggers string
+
+//go:embed 0006_status_reports.sql
+var statusReports string
+
+//go:embed 0007_run_reruns.sql
+var runReruns string
+
+//go:embed 0008_failure_explanations.sql
+var failureExplanations string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
 	{ID: "0002_job_queue", Script: queue},
 	{ID: "0003_artifacts", Script: artifacts},
 	{ID: "0004_job_specs", Script: jobSpecs},
+	{ID: "0005_run_triggers", Script: runTriggers},
+	{ID: "0006_status_reports", Script: statusReports},
+	{ID: "0007_run_reruns", Script: runReruns},
+	{ID: "0008_failure_explanations", Script: failureExplanations},
 }

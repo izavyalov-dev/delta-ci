@@ -25,7 +25,7 @@ var runTransitions = map[RunState][]RunState{
 	RunStateCreated:         {RunStateCreated, RunStatePlanning},
 	RunStatePlanning:        {RunStatePlanning, RunStateQueued, RunStatePlanFailed},
 	RunStatePlanFailed:      {RunStatePlanFailed, RunStateFailed},
-	RunStateQueued:          {RunStateQueued, RunStateRunning},
+	RunStateQueued:          {RunStateQueued, RunStateRunning, RunStateCancelRequested},
 	RunStateRunning:         {RunStateRunning, RunStateSuccess, RunStateFailed, RunStateCancelRequested, RunStateTimeout},
 	RunStateCancelRequested: {RunStateCancelRequested, RunStateCanceled},
 	RunStateSuccess:         {RunStateSuccess, RunStateReported},

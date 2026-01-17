@@ -12,7 +12,7 @@ It asks **“what actually changed, and what really needs to run?”**
 Traditional CI systems:
 - run the same static pipelines on every change
 - waste compute on unaffected code paths
-- produce noisy, slow feedback
+- produce noisy, slow feedback 
 - treat failures as logs to read, not problems to understand
 
 Delta CI takes a different approach.

@@ -77,6 +77,7 @@ reference/
 ├─ terminology.md         # Canonical definitions of core terms
 ├─ api-contracts.md       # Orchestrator and external APIs
 ├─ runner-messages.md     # Runner protocol message schemas
+├─ vcs-github.md          # GitHub webhook + status reporting behavior
 └─ configuration.md       # ci.ai.yaml and policy configuration
 ```
 ---

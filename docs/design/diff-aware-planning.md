@@ -33,6 +33,9 @@ The planner operates on a fixed set of inputs:
 
 No hidden state is allowed.
 
+Phase 1 uses the local git checkout to compute diffs. The repository root is
+resolved from `DELTA_CI_REPO_ROOT` (or the current working directory if unset).
+
 ---
 
 ## Planning Phases
@@ -132,6 +135,19 @@ If any phase produces uncertainty:
 The planner must **expand the plan**, not shrink it.
 
 Correctness is always preferred over optimization.
+
+---
+
+## Phase 1 Minimal Heuristics
+
+Phase 1 uses a minimal, deterministic heuristic set:
+
+- If `go.mod` or `go.sum` is present, the planner emits Go jobs.
+- The diff is computed with `git show --name-only <commit_sha>`.
+- Docs-only changes (`docs/`, `README.md`, `CONTRIBUTING.md`, `*.md`) run `go build` only.
+- Code or global-impact changes run `go build` and `go test`.
+- A `lint` job (`go vet ./...`) is included as **allow-failure** when code is touched.
+- If diff or discovery fails, the planner falls back to the static plan.
 
 ---
 

@@ -59,6 +59,24 @@ If your environment requires it, you can disable cgo:
 export CGO_ENABLED=0
 ```
 
+## Local Worker for Webhook Runs
+
+When using GitHub webhooks locally, the orchestrator will create runs but jobs
+remain queued until a worker leases them. Use the worker command to drain the
+queue and execute jobs locally.
+
+```bash
+go run ./cmd/orchestrator worker \
+  -database-url "$DATABASE_URL" \
+  -orchestrator-url "http://localhost:8080" \
+  -runner-id "local-worker" \
+  -workdir "." \
+  -runner-log-dir ".delta-ci/logs"
+```
+
+The worker uses the same runner command and log upload options as dogfood:
+`-runner-cmd`, `-s3-bucket`, `-s3-prefix`, and `-s3-region`.
+
 ## Validation Checklist (Manual)
 
 ### Lease Expiration

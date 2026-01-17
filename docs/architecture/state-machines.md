@@ -81,7 +81,7 @@ It does not define:
    **Owner:** Orchestrator  
    Condition: any required job reaches terminal failure with no retries left
 
-8. `RUNNING -> CANCEL_REQUESTED`  
+8. `RUNNING|QUEUED -> CANCEL_REQUESTED`  
    **Owner:** Orchestrator  
    Trigger: user cancel or superseded run policy
 
@@ -240,6 +240,8 @@ Cancellation is two-phase:
    - it receives `CancelAck`, or
    - cancel deadline is exceeded (forced cancel)
 
+Queued jobs without an active lease may be finalized immediately after cancellation.
+
 ### Forced Cancel
 
 Forced cancel exists to prevent stuck runs and resource leaks.
@@ -295,6 +297,7 @@ Orchestrator must treat these operations as idempotent:
 - receiving duplicate VCS webhooks for the same commit/PR event
 - receiving duplicate runner messages (heartbeats, completes) due to retries
 - re-processing queue deliveries (at-least-once semantics)
+- dropping dispatch queue entries tied to terminal or cancel-requested runs
 
 Recommended strategy:
 - use `(lease_id, message_type, sequence_no)` or `(lease_id, ts)` + monotonic checks
