@@ -59,8 +59,8 @@ type CheckRunRequest struct {
 	HeadSHA     string    `json:"head_sha"`
 	Status      string    `json:"status,omitempty"`
 	Conclusion  string    `json:"conclusion,omitempty"`
-	StartedAt   time.Time `json:"started_at,omitempty"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	Output      struct {
 		Title   string `json:"title"`
 		Summary string `json:"summary"`

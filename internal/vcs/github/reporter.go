@@ -185,9 +185,13 @@ func buildCheckRun(name string, run state.Run, title, summary string) CheckRunRe
 	req.Output.Summary = summary
 	if status == "completed" {
 		req.Conclusion = conclusion
-		req.CompletedAt = run.UpdatedAt
+		completedAt := run.UpdatedAt
+		req.CompletedAt = &completedAt
 	}
-	req.StartedAt = run.CreatedAt
+	if status != "queued" {
+		startedAt := run.CreatedAt
+		req.StartedAt = &startedAt
+	}
 	return req
 }
 
