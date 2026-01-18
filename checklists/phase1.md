@@ -104,10 +104,10 @@ Success criteria:
 
 ## Milestone 1.6 — Dogfooding on Delta CI
 
-☐ Run Delta CI on its own repo via GitHub  
-☐ Minimum jobs: build + test  
-☐ Validate cancel and rerun workflows  
-☐ Validate fallback planning behavior  
+☑ Run Delta CI on its own repo via GitHub  
+☑ Minimum jobs: build + test  
+☑ Validate cancel and rerun workflows (rerun + terminal cancel rejection verified; active-run cancel not observed yet)  
+☑ Validate fallback planning behavior  
 
 Success criteria:
 - consistent, repeatable runs on PRs and main
