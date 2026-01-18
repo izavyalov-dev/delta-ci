@@ -40,15 +40,32 @@ func (s *Store) DequeueJobAttempt(ctx context.Context, now time.Time, visibility
 		visibilityTimeout = 30 * time.Second
 	}
 
+	if _, err := s.db.ExecContext(ctx, `
+DELETE FROM job_queue q
+USING job_attempts a
+JOIN jobs j ON j.id = a.job_id
+JOIN runs r ON r.id = j.run_id
+WHERE q.attempt_id = a.id
+  AND (
+    a.state <> 'QUEUED'
+    OR r.state IN ('SUCCESS', 'FAILED', 'CANCELED', 'TIMEOUT', 'REPORTED', 'PLAN_FAILED', 'CANCEL_REQUESTED')
+  )
+`); err != nil {
+		return "", err
+	}
+
 	var attemptID string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
 SELECT q.attempt_id
 FROM job_queue q
 JOIN job_attempts a ON a.id = q.attempt_id
+JOIN jobs j ON j.id = a.job_id
+JOIN runs r ON r.id = j.run_id
 WHERE q.available_at <= $1
   AND (q.inflight_until IS NULL OR q.inflight_until <= $1)
   AND a.state = 'QUEUED'
+  AND r.state NOT IN ('SUCCESS', 'FAILED', 'CANCELED', 'TIMEOUT', 'REPORTED', 'PLAN_FAILED', 'CANCEL_REQUESTED')
 ORDER BY q.available_at ASC, q.attempt_id ASC
 FOR UPDATE SKIP LOCKED
 LIMIT 1

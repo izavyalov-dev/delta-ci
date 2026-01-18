@@ -21,7 +21,8 @@ type PlanRequest struct {
 
 // PlanResult is the outcome of the planning step.
 type PlanResult struct {
-	Jobs []PlannedJob
+	Jobs    []PlannedJob
+	Explain string
 }
 
 // PlannedJob describes a single job to schedule.
@@ -29,6 +30,7 @@ type PlannedJob struct {
 	Name     string
 	Required bool
 	Spec     protocol.JobSpec
+	Reason   string
 }
 
 // StaticPlanner returns a fixed list of jobs. This keeps Phase 0 simple while
@@ -39,11 +41,15 @@ type StaticPlanner struct {
 
 func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error) {
 	if len(p.Jobs) > 0 {
-		return PlanResult{Jobs: p.Jobs}, nil
+		return PlanResult{
+			Jobs:    p.Jobs,
+			Explain: "static planner configured",
+		}, nil
 	}
 
 	// Default to a single required "build" job during early bootstrap.
 	return PlanResult{
+		Explain: "static planner default (no diff analysis available)",
 		Jobs: []PlannedJob{
 			{
 				Name:     "build",
@@ -53,6 +59,7 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 					Workdir: ".",
 					Steps:   []string{"go build ./..."},
 				},
+				Reason: "default build job",
 			},
 			{
 				Name:     "test",
@@ -62,6 +69,17 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 					Workdir: ".",
 					Steps:   []string{"go test ./..."},
 				},
+				Reason: "default test job",
+			},
+			{
+				Name:     "lint",
+				Required: false,
+				Spec: protocol.JobSpec{
+					Name:    "lint",
+					Workdir: ".",
+					Steps:   []string{"go vet ./..."},
+				},
+				Reason: "default lint job",
 			},
 		},
 	}, nil

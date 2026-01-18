@@ -34,11 +34,11 @@ Correctness, explainability, and safety remain mandatory.
 
 ## Milestone 1.1 — GitHub Integration (Checks + PR Comments)
 
-☐ Implement webhook ingestion with idempotency  
-☐ Normalize push and PR events into run creation  
-☐ Implement Status Reporter for GitHub checks  
-☐ Post PR comment summaries with run results  
-☐ Ensure updates are idempotent and replay-safe  
+☑ Implement webhook ingestion with idempotency  
+☑ Normalize push and PR events into run creation  
+☑ Implement Status Reporter for GitHub checks  
+☑ Post PR comment summaries with run results  
+☑ Ensure updates are idempotent and replay-safe  
 
 Success criteria:
 - duplicate webhooks do not create duplicate runs
@@ -49,11 +49,11 @@ Success criteria:
 
 ## Milestone 1.2 — Run Management (Rerun + Cancel)
 
-☐ Implement run cancel API  
-☐ Implement run rerun API  
-☐ Propagate cancel to active jobs  
-☐ Enforce state machine transitions for cancel/rerun  
-☐ Surface cancel/rerun in GitHub comments or checks  
+☑ Implement run cancel API  
+☑ Implement run rerun API  
+☑ Propagate cancel to active jobs  
+☑ Enforce state machine transitions for cancel/rerun  
+☑ Surface cancel/rerun in GitHub comments or checks  
 
 Success criteria:
 - cancel moves run to CANCEL_REQUESTED and finalizes correctly
@@ -63,11 +63,11 @@ Success criteria:
 
 ## Milestone 1.3 — Planner v1 (Diff-Aware, Conservative)
 
-☐ Implement discovery inputs (build files, README/CONTRIBUTING)  
-☐ Implement minimal impact analysis from diff paths  
-☐ Construct an explainable plan with required vs allow-failure jobs  
-☐ Provide explicit “why this ran” reasoning  
-☐ Fallback to “run everything” on uncertainty  
+☑ Implement discovery inputs (build files, README/CONTRIBUTING)  
+☑ Implement minimal impact analysis from diff paths  
+☑ Construct an explainable plan with required vs allow-failure jobs  
+☑ Provide explicit “why this ran” reasoning  
+☑ Fallback to “run everything” on uncertainty  
 
 Success criteria:
 - planner output is deterministic for the same inputs
@@ -77,10 +77,10 @@ Success criteria:
 
 ## Milestone 1.4 — Artifact and Log Retrieval
 
-☐ Store logs and artifacts in external storage  
-☐ Persist artifact references in control plane  
-☐ Expose APIs to fetch log and artifact URLs  
-☐ Ensure logs are treated as untrusted input  
+☑ Store logs and artifacts in external storage  
+☑ Persist artifact references in control plane  
+☑ Expose APIs to fetch log and artifact URLs  
+☑ Ensure logs are treated as untrusted input  
 
 Success criteria:
 - run/job APIs provide links to logs and artifacts
@@ -90,11 +90,11 @@ Success criteria:
 
 ## Milestone 1.5 — Failure Explanations (Rule-Based First)
 
-☐ Implement rule-based failure classification  
-☐ Generate a concise failure explanation summary  
-☐ Ensure inputs are sanitized and size-bounded  
-☐ Provide links to relevant logs and artifacts  
-☐ Add AI hook points but keep them disabled by default  
+☑ Implement rule-based failure classification  
+☑ Generate a concise failure explanation summary  
+☑ Ensure inputs are sanitized and size-bounded  
+☑ Provide links to relevant logs and artifacts  
+☑ Add AI hook points but keep them disabled by default  
 
 Success criteria:
 - explanations are based on observable data only
@@ -104,10 +104,10 @@ Success criteria:
 
 ## Milestone 1.6 — Dogfooding on Delta CI
 
-☐ Run Delta CI on its own repo via GitHub  
-☐ Minimum jobs: build + test  
-☐ Validate cancel and rerun workflows  
-☐ Validate fallback planning behavior  
+☑ Run Delta CI on its own repo via GitHub  
+☑ Minimum jobs: build + test  
+☑ Validate cancel and rerun workflows (rerun + terminal cancel rejection verified; active-run cancel not observed yet)  
+☑ Validate fallback planning behavior  
 
 Success criteria:
 - consistent, repeatable runs on PRs and main

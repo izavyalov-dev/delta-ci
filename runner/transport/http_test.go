@@ -27,7 +27,7 @@ func TestHTTPClientPostsJSON(t *testing.T) {
 	defer srv.Close()
 
 	client := NewHTTPClient(srv.URL)
-	err := client.post(context.Background(), "/api/v1/internal/ack-lease", protocol.AckLease{
+	err := client.AckLease(context.Background(), protocol.AckLease{
 		Type:       "AckLease",
 		JobID:      "job",
 		LeaseID:    "lease",
