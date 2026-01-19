@@ -23,10 +23,17 @@ type PlanRequest struct {
 type PlanResult struct {
 	Jobs          []PlannedJob
 	Explain       string
+	SkippedJobs   []SkippedJob
 	Fingerprint   string
 	RecipeSource  string
 	RecipeID      string
 	RecipeVersion int
+}
+
+// SkippedJob describes a planned job that was intentionally not scheduled.
+type SkippedJob struct {
+	Name   string
+	Reason string
 }
 
 // PlannedJob describes a single job to schedule.

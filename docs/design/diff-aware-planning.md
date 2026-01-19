@@ -185,6 +185,7 @@ For every plan, the system must be able to explain:
 - why jobs were included or excluded
 - why a fallback was chosen
 - what assumptions were made
+- which jobs were skipped and why
 
 Explainability is not optional.
 

@@ -69,6 +69,15 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
+	var plan *state.RunPlan
+	runPlan, err := r.store.GetRunPlan(ctx, runID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+	} else {
+		plan = &runPlan
+	}
 	jobArtifacts := make(map[string][]state.Artifact, len(jobs))
 	jobFailures := make(map[string]*state.FailureExplanation, len(jobs))
 	for _, job := range jobs {
@@ -87,7 +96,7 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 		}
 	}
 
-	title, summary := buildSummary(run, jobs, jobArtifacts, jobFailures)
+	title, summary := buildSummary(run, plan, jobs, jobArtifacts, jobFailures)
 	checkReq := buildCheckRun(r.checkName, run, title, summary)
 
 	checkRunID := report.CheckRunID
@@ -232,13 +241,27 @@ func isReportableTerminal(stateValue state.RunState) bool {
 	}
 }
 
-func buildSummary(run state.Run, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation) (string, string) {
+func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation) (string, string) {
 	title := fmt.Sprintf("Delta CI: %s", run.State)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run `%s`\n\n", run.ID)
 	fmt.Fprintf(&b, "State: `%s`\n", run.State)
 	fmt.Fprintf(&b, "Ref: `%s`\n", run.Ref)
 	fmt.Fprintf(&b, "Commit: `%s`\n", run.CommitSHA)
+	if plan != nil {
+		if plan.RecipeSource != "" {
+			fmt.Fprintf(&b, "Plan source: `%s`\n", sanitize(plan.RecipeSource))
+		}
+		if plan.Explain != "" {
+			fmt.Fprintf(&b, "Plan: %s\n", sanitize(plan.Explain))
+		}
+		if len(plan.SkippedJobs) > 0 {
+			b.WriteString("\nSkipped jobs:\n")
+			for _, skipped := range plan.SkippedJobs {
+				fmt.Fprintf(&b, "- %s: %s\n", sanitize(skipped.Name), sanitize(skipped.Reason))
+			}
+		}
+	}
 	if len(jobs) == 0 {
 		return title, b.String()
 	}
@@ -250,6 +273,9 @@ func buildSummary(run state.Run, jobs []state.Job, artifacts map[string][]state.
 			required = "optional"
 		}
 		fmt.Fprintf(&b, "- %s (%s): `%s`\n", sanitize(job.Name), required, job.State)
+		if job.Reason != "" {
+			fmt.Fprintf(&b, "  Reason: %s\n", sanitize(job.Reason))
+		}
 		if job.State == state.JobStateFailed || job.State == state.JobStateTimedOut {
 			if failure := failures[job.ID]; failure != nil {
 				fmt.Fprintf(&b, "  Failure: %s (%s/%s)\n", sanitize(failure.Summary), sanitize(string(failure.Category)), sanitize(string(failure.Confidence)))

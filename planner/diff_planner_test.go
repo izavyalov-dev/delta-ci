@@ -180,6 +180,42 @@ func TestPlanForGoRootJobNames(t *testing.T) {
 	}
 }
 
+func TestPlanForGoDocsOnlySkipsTestAndLint(t *testing.T) {
+	projects := []project{
+		{
+			Name:       "root",
+			Root:       ".",
+			Language:   "go",
+			ModulePath: "example.com/root",
+		},
+	}
+
+	impact := analyzeImpact([]string{"README.md"}, projects, false)
+	plan := planForGo(impact, "explain", projects, ".", false)
+	if len(plan.Jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(plan.Jobs))
+	}
+	if len(plan.SkippedJobs) != 2 {
+		t.Fatalf("expected 2 skipped jobs, got %d", len(plan.SkippedJobs))
+	}
+
+	expected := map[string]bool{"test": false, "lint": false}
+	for _, skipped := range plan.SkippedJobs {
+		if _, ok := expected[skipped.Name]; !ok {
+			t.Fatalf("unexpected skipped job %q", skipped.Name)
+		}
+		if !strings.Contains(skipped.Reason, "docs-only change") {
+			t.Fatalf("unexpected skipped reason for %s: %q", skipped.Name, skipped.Reason)
+		}
+		expected[skipped.Name] = true
+	}
+	for name, seen := range expected {
+		if !seen {
+			t.Fatalf("missing skipped job %s", name)
+		}
+	}
+}
+
 func TestParseGoWork(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "go.work")

@@ -686,6 +686,7 @@ func planForGo(impact impactSummary, explain string, projects []project, repoRoo
 	sort.Strings(targetProjects)
 
 	jobs := make([]PlannedJob, 0, len(targetProjects))
+	skipped := buildSkippedJobs(impact, targetProjects, projectRoots)
 	for _, projectName := range targetProjects {
 		root := projectRoots[projectName]
 		if root == "" {
@@ -736,8 +737,9 @@ func planForGo(impact impactSummary, explain string, projects []project, repoRoo
 	}
 
 	return PlanResult{
-		Jobs:    jobs,
-		Explain: explain,
+		Jobs:        jobs,
+		Explain:     explain,
+		SkippedJobs: skipped,
 	}
 }
 
@@ -745,6 +747,11 @@ type reasonSet struct {
 	build string
 	test  string
 	lint  string
+}
+
+type skipReasonSet struct {
+	test string
+	lint string
 }
 
 func buildReasons(impact impactSummary) reasonSet {
@@ -755,6 +762,38 @@ func buildReasons(impact impactSummary) reasonSet {
 		test:  fmt.Sprintf("go test triggered by %s", impactReason),
 		lint:  fmt.Sprintf("optional lint for %s", impactReason),
 	}
+}
+
+func buildSkipReasons() skipReasonSet {
+	return skipReasonSet{
+		test: "docs-only change: skipped go test",
+		lint: "docs-only change: skipped go vet",
+	}
+}
+
+func buildSkippedJobs(impact impactSummary, projects []string, roots map[string]string) []SkippedJob {
+	if !impact.DocsOnly {
+		return nil
+	}
+	reasons := buildSkipReasons()
+	skipped := make([]SkippedJob, 0, len(projects)*2)
+	for _, projectName := range projects {
+		root := roots[projectName]
+		if root == "" {
+			root = "."
+		}
+		testName := jobNameForProject("test", projectName, root)
+		skipped = append(skipped, SkippedJob{
+			Name:   testName,
+			Reason: reasonForProject(reasons.test, projectName, root),
+		})
+		lintName := jobNameForProject("lint", projectName, root)
+		skipped = append(skipped, SkippedJob{
+			Name:   lintName,
+			Reason: reasonForProject(reasons.lint, projectName, root),
+		})
+	}
+	return skipped
 }
 
 func buildExplain(discovery discoveryInputs, impact impactSummary) string {

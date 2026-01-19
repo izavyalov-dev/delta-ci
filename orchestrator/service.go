@@ -273,6 +273,7 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 			RunID:    run.ID,
 			Name:     planned.Name,
 			Required: planned.Required,
+			Reason:   planned.Reason,
 			State:    state.JobStateCreated,
 		})
 		if err != nil {
@@ -395,6 +396,16 @@ func (s *Service) recordRunPlan(ctx context.Context, run state.Run, plan planner
 		RepoID:       run.RepoID,
 		Fingerprint:  plan.Fingerprint,
 		RecipeSource: source,
+		Explain:      plan.Explain,
+	}
+	if len(plan.SkippedJobs) > 0 {
+		record.SkippedJobs = make([]state.SkippedJob, 0, len(plan.SkippedJobs))
+		for _, skipped := range plan.SkippedJobs {
+			record.SkippedJobs = append(record.SkippedJobs, state.SkippedJob{
+				Name:   skipped.Name,
+				Reason: skipped.Reason,
+			})
+		}
 	}
 	if plan.RecipeID != "" {
 		id := plan.RecipeID
@@ -446,6 +457,27 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 		return RunDetails{}, err
 	}
 
+	var planDetail *RunPlanDetail
+	plan, err := s.store.GetRunPlan(ctx, runID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			return RunDetails{}, err
+		}
+	} else {
+		skipped := plan.SkippedJobs
+		if skipped == nil {
+			skipped = []state.SkippedJob{}
+		}
+		planDetail = &RunPlanDetail{
+			RecipeSource:  plan.RecipeSource,
+			RecipeID:      plan.RecipeID,
+			RecipeVersion: plan.RecipeVersion,
+			Fingerprint:   plan.Fingerprint,
+			Explain:       plan.Explain,
+			SkippedJobs:   skipped,
+		}
+	}
+
 	jobDetails := make([]JobDetail, 0, len(jobs))
 	for _, job := range jobs {
 		attempts, err := s.store.ListJobAttempts(ctx, job.ID)
@@ -474,6 +506,7 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 	return RunDetails{
 		Run:  run,
 		Jobs: jobDetails,
+		Plan: planDetail,
 	}, nil
 }
 
@@ -1147,6 +1180,8 @@ func (s *Service) updateRunPlanRecipe(ctx context.Context, run state.Run, plan s
 		RepoID:       run.RepoID,
 		Fingerprint:  plan.Fingerprint,
 		RecipeSource: plan.RecipeSource,
+		Explain:      plan.Explain,
+		SkippedJobs:  plan.SkippedJobs,
 	}
 	record.RecipeID = &recipeID
 	if version > 0 {

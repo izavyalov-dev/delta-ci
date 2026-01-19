@@ -46,16 +46,20 @@ WHERE id = $1
 // GetJob returns a single job by ID.
 func (s *Store) GetJob(ctx context.Context, jobID string) (Job, error) {
 	var job Job
+	var reason sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, run_id, name, required, state, attempt_count, created_at, updated_at
+SELECT id, run_id, name, required, state, attempt_count, reason, created_at, updated_at
 FROM jobs
 WHERE id = $1
-`, jobID).Scan(&job.ID, &job.RunID, &job.Name, &job.Required, &job.State, &job.AttemptCount, &job.CreatedAt, &job.UpdatedAt)
+`, jobID).Scan(&job.ID, &job.RunID, &job.Name, &job.Required, &job.State, &job.AttemptCount, &reason, &job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Job{}, fmt.Errorf("%w: job %s", ErrNotFound, jobID)
 		}
 		return Job{}, err
+	}
+	if reason.Valid {
+		job.Reason = reason.String
 	}
 	return job, nil
 }
@@ -67,10 +71,10 @@ func (s *Store) CreateJob(ctx context.Context, job Job) (Job, error) {
 	}
 
 	err := s.db.QueryRowContext(ctx, `
-INSERT INTO jobs (id, run_id, name, required, state, attempt_count)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO jobs (id, run_id, name, required, state, attempt_count, reason)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING created_at, updated_at
-`, job.ID, job.RunID, job.Name, job.Required, job.State, job.AttemptCount).Scan(&job.CreatedAt, &job.UpdatedAt)
+`, job.ID, job.RunID, job.Name, job.Required, job.State, job.AttemptCount, nullableString(job.Reason)).Scan(&job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		return Job{}, err
 	}
@@ -81,7 +85,7 @@ RETURNING created_at, updated_at
 // ListJobsByRun returns all jobs for a given run ordered by creation time.
 func (s *Store) ListJobsByRun(ctx context.Context, runID string) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, run_id, name, required, state, attempt_count, created_at, updated_at
+SELECT id, run_id, name, required, state, attempt_count, reason, created_at, updated_at
 FROM jobs
 WHERE run_id = $1
 ORDER BY created_at ASC, id ASC
@@ -94,8 +98,12 @@ ORDER BY created_at ASC, id ASC
 	var jobs []Job
 	for rows.Next() {
 		var job Job
-		if err := rows.Scan(&job.ID, &job.RunID, &job.Name, &job.Required, &job.State, &job.AttemptCount, &job.CreatedAt, &job.UpdatedAt); err != nil {
+		var reason sql.NullString
+		if err := rows.Scan(&job.ID, &job.RunID, &job.Name, &job.Required, &job.State, &job.AttemptCount, &reason, &job.CreatedAt, &job.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if reason.Valid {
+			job.Reason = reason.String
 		}
 		jobs = append(jobs, job)
 	}
