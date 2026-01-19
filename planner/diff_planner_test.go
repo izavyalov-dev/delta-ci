@@ -132,7 +132,7 @@ func TestPlanForGoPerProjectJobs(t *testing.T) {
 	}
 
 	impact := analyzeImpact([]string{"services/api/main.go"}, projects, false)
-	plan := planForGo(impact, "explain", projects)
+	plan := planForGo(impact, "explain", projects, ".", false)
 	if len(plan.Jobs) != 3 {
 		t.Fatalf("expected 3 jobs, got %d", len(plan.Jobs))
 	}
@@ -168,7 +168,7 @@ func TestPlanForGoRootJobNames(t *testing.T) {
 	}
 
 	impact := analyzeImpact([]string{"main.go"}, projects, false)
-	plan := planForGo(impact, "explain", projects)
+	plan := planForGo(impact, "explain", projects, ".", false)
 	if len(plan.Jobs) != 3 {
 		t.Fatalf("expected 3 jobs, got %d", len(plan.Jobs))
 	}

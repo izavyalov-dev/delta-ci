@@ -7,6 +7,14 @@ type JobSpec struct {
 	Workdir string            `json:"workdir,omitempty"`
 	Steps   []string          `json:"steps"`
 	Env     map[string]string `json:"env,omitempty"`
+	Caches  []CacheSpec       `json:"caches,omitempty"`
+}
+
+type CacheSpec struct {
+	Type     string   `json:"type"`
+	Key      string   `json:"key"`
+	Paths    []string `json:"paths"`
+	ReadOnly bool     `json:"read_only,omitempty"`
 }
 
 // LeaseGranted is sent from orchestrator to runner.
@@ -70,6 +78,14 @@ type Complete struct {
 	FinishedAt time.Time      `json:"finished_at"`
 	Summary    string         `json:"summary,omitempty"`
 	Artifacts  []ArtifactRef  `json:"artifacts,omitempty"`
+	Caches     []CacheEvent   `json:"caches,omitempty"`
+}
+
+type CacheEvent struct {
+	Type     string `json:"type"`
+	Key      string `json:"key"`
+	Hit      bool   `json:"hit"`
+	ReadOnly bool   `json:"read_only,omitempty"`
 }
 
 type CancelFinalStatus string

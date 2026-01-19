@@ -54,6 +54,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 	discovery := discoverInputs(root)
 	fingerprint, fingerprintErr := computeRepoFingerprint(root)
 	hasGo := len(discovery.projects) > 0 || discovery.hasFile("go.mod") || discovery.hasFile("go.sum") || discovery.hasFile("go.work") || discovery.hasFile("go.work.sum")
+	cacheReadOnly := isPullRequestRef(req.Ref)
 
 	if discovery.hasFile("ci.ai.yaml") {
 		result, planErr := p.fallbackPlan(ctx, req, "explicit config present (ci.ai.yaml)", nil)
@@ -102,7 +103,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 	impact := analyzeImpact(paths, discovery.projects, discovery.dependencyUnknown)
 	explain := buildExplain(discovery, impact)
 
-	result := planForGo(impact, explain, discovery.projects)
+	result := planForGo(impact, explain, discovery.projects, root, cacheReadOnly)
 	applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceDiscovery, recipeNote)
 	return result, nil
 }
@@ -669,7 +670,7 @@ func analyzeImpact(paths []string, projects []project, dependencyUnknown bool) i
 	}
 }
 
-func planForGo(impact impactSummary, explain string, projects []project) PlanResult {
+func planForGo(impact impactSummary, explain string, projects []project, repoRoot string, cacheReadOnly bool) PlanResult {
 	reasons := buildReasons(impact)
 	projectRoots := buildProjectRootIndex(projects)
 	targetProjects := impact.ImpactedProjects
@@ -690,6 +691,7 @@ func planForGo(impact impactSummary, explain string, projects []project) PlanRes
 		if root == "" {
 			root = "."
 		}
+		cacheSpecs := buildGoCacheSpecs(repoRoot, root, cacheReadOnly)
 		buildName := jobNameForProject("build", projectName, root)
 		jobs = append(jobs, PlannedJob{
 			Name:     buildName,
@@ -698,6 +700,7 @@ func planForGo(impact impactSummary, explain string, projects []project) PlanRes
 				Name:    buildName,
 				Workdir: root,
 				Steps:   []string{"go build ./..."},
+				Caches:  cacheSpecs,
 			},
 			Reason: reasonForProject(reasons.build, projectName, root),
 		})
@@ -711,6 +714,7 @@ func planForGo(impact impactSummary, explain string, projects []project) PlanRes
 					Name:    testName,
 					Workdir: root,
 					Steps:   []string{"go test ./..."},
+					Caches:  cacheSpecs,
 				},
 				Reason:    reasonForProject(reasons.test, projectName, root),
 				DependsOn: []string{buildName},
@@ -723,6 +727,7 @@ func planForGo(impact impactSummary, explain string, projects []project) PlanRes
 					Name:    lintName,
 					Workdir: root,
 					Steps:   []string{"go vet ./..."},
+					Caches:  cacheSpecs,
 				},
 				Reason:    reasonForProject(reasons.lint, projectName, root),
 				DependsOn: []string{buildName},
@@ -931,6 +936,63 @@ func isGlobalImpact(path string) bool {
 	default:
 		return false
 	}
+}
+
+func isPullRequestRef(ref string) bool {
+	return strings.HasPrefix(ref, "refs/pull/")
+}
+
+func buildGoCacheSpecs(repoRoot, projectRoot string, readOnly bool) []protocol.CacheSpec {
+	key, err := goModuleCacheKey(repoRoot, projectRoot)
+	if err != nil {
+		return nil
+	}
+	return []protocol.CacheSpec{
+		{
+			Type:     "deps",
+			Key:      key,
+			Paths:    []string{"~/go/pkg/mod"},
+			ReadOnly: readOnly,
+		},
+	}
+}
+
+func goModuleCacheKey(repoRoot, projectRoot string) (string, error) {
+	moduleRoot := projectRoot
+	if moduleRoot == "" {
+		moduleRoot = "."
+	}
+
+	files := []string{"go.mod", "go.sum"}
+	hasher := sha256.New()
+	found := false
+	for _, name := range files {
+		path := filepath.Join(repoRoot, moduleRoot, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", err
+		}
+		found = true
+		if _, err := hasher.Write([]byte(name)); err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write([]byte{0}); err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write(data); err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write([]byte{0}); err != nil {
+			return "", err
+		}
+	}
+	if !found {
+		return "", errors.New("go module files unavailable")
+	}
+	return fmt.Sprintf("go:deps:%s", hex.EncodeToString(hasher.Sum(nil))), nil
 }
 
 func buildProjectRootIndex(projects []project) map[string]string {

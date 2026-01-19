@@ -804,6 +804,19 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 		// Artifact references are best-effort; job completion must not be blocked.
 		_ = s.store.RecordArtifacts(ctx, attempt.ID, artifactRefs)
 	}
+	if len(msg.Caches) > 0 {
+		cacheEvents := make([]state.CacheEvent, 0, len(msg.Caches))
+		for _, cache := range msg.Caches {
+			cacheEvents = append(cacheEvents, state.CacheEvent{
+				JobAttemptID: attempt.ID,
+				CacheType:    cache.Type,
+				CacheKey:     cache.Key,
+				Hit:          cache.Hit,
+				ReadOnly:     cache.ReadOnly,
+			})
+		}
+		_ = s.store.RecordCacheEvents(ctx, attempt.ID, cacheEvents)
+	}
 
 	if target == state.JobStateFailed {
 		s.recordFailureExplanation(ctx, job, attempt, msg, artifactRefs)

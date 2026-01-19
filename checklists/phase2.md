@@ -77,11 +77,11 @@ Success criteria:
 
 ## Milestone 2.4 — Conservative Cache Integration
 
-- [ ] Define cache config per job in the control plane
-- [ ] Implement dependency and toolchain cache mounts in runners
-- [ ] Enforce fork PR read-only or no-cache policy
-- [ ] Ensure cache key inputs are deterministic and secret-free
-- [ ] Report cache hit/miss and keys in job metadata
+- [x] Define cache config per job in the control plane
+- [x] Implement dependency and toolchain cache mounts in runners
+- [x] Enforce fork PR read-only or no-cache policy
+- [x] Ensure cache key inputs are deterministic and secret-free
+- [x] Report cache hit/miss and keys in job metadata
 
 Success criteria:
 - cache failures never block job correctness
