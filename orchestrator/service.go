@@ -33,6 +33,13 @@ type Service struct {
 	metrics    *observability.Metrics
 }
 
+type plannedJobRecord struct {
+	planned planner.PlannedJob
+	job     state.Job
+	attempt state.JobAttempt
+	logger  *slog.Logger
+}
+
 // NewService constructs an orchestrator service with sensible defaults.
 func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator, reporter StatusReporter, analyzer FailureAnalyzer) *Service {
 	if plan == nil {
@@ -248,8 +255,13 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 		runLogger.Info("plan generated", "event", "plan_generated", "explain", planResult.Explain)
 	}
 
-	jobDetails := make([]JobDetail, 0, len(planResult.Jobs))
+	jobRecords := make([]plannedJobRecord, 0, len(planResult.Jobs))
+	jobIndex := make(map[string]int, len(planResult.Jobs))
 	for _, planned := range planResult.Jobs {
+		if _, exists := jobIndex[planned.Name]; exists {
+			return RunDetails{}, fmt.Errorf("duplicate job name %q in plan", planned.Name)
+		}
+
 		jobID := s.ids.JobID()
 		job, err := s.store.CreateJob(ctx, state.Job{
 			ID:       jobID,
@@ -297,29 +309,52 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 		if err != nil {
 			return RunDetails{}, fmt.Errorf("create attempt for job %s: %w", job.ID, err)
 		}
-
-		if err := s.store.TransitionJobState(ctx, job.ID, state.JobStateQueued); err != nil {
-			return RunDetails{}, err
-		}
-		job.State = state.JobStateQueued
 		job.AttemptCount = attempt.AttemptNumber
-		jobLogger.Info("job queued", "event", "job_queued", "attempt_id", attempt.ID)
-		s.metrics.IncJob("queued")
 
-		if err := s.store.TransitionJobAttemptState(ctx, attempt.ID, state.JobStateQueued); err != nil {
+		jobRecords = append(jobRecords, plannedJobRecord{
+			planned: planned,
+			job:     job,
+			attempt: attempt,
+			logger:  jobLogger,
+		})
+		jobIndex[planned.Name] = len(jobRecords) - 1
+	}
+
+	for i := range jobRecords {
+		record := &jobRecords[i]
+		if len(record.planned.DependsOn) == 0 {
+			continue
+		}
+		for _, dependencyName := range record.planned.DependsOn {
+			if dependencyName == record.planned.Name {
+				return RunDetails{}, fmt.Errorf("job %q cannot depend on itself", record.planned.Name)
+			}
+			depIndex, ok := jobIndex[dependencyName]
+			if !ok {
+				return RunDetails{}, fmt.Errorf("job %q depends on unknown job %q", record.planned.Name, dependencyName)
+			}
+			if err := s.store.RecordJobDependency(ctx, record.job.ID, jobRecords[depIndex].job.ID); err != nil {
+				return RunDetails{}, fmt.Errorf("record dependency for job %s: %w", record.job.ID, err)
+			}
+		}
+	}
+
+	for i := range jobRecords {
+		record := &jobRecords[i]
+		if len(record.planned.DependsOn) > 0 {
+			record.logger.Info("job waiting on dependencies", "event", "job_blocked", "depends_on", record.planned.DependsOn)
+			continue
+		}
+		if err := s.queueJobAttempt(ctx, &record.job, &record.attempt, record.logger); err != nil {
 			return RunDetails{}, err
 		}
-		attempt.State = state.JobStateQueued
+	}
 
-		if err := s.dispatcher.EnqueueJobAttempt(ctx, attempt); err != nil {
-			jobLogger.Error("enqueue attempt failed", "event", "enqueue_failed", "error", err)
-			s.metrics.IncFailure("enqueue_failed")
-			return RunDetails{}, fmt.Errorf("enqueue attempt %s: %w", attempt.ID, err)
-		}
-
+	jobDetails := make([]JobDetail, 0, len(jobRecords))
+	for _, record := range jobRecords {
 		jobDetails = append(jobDetails, JobDetail{
-			Job:                 job,
-			Attempts:            []state.JobAttempt{attempt},
+			Job:                 record.job,
+			Attempts:            []state.JobAttempt{record.attempt},
 			Artifacts:           nil,
 			FailureExplanations: nil,
 		})
@@ -342,6 +377,32 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 		Run:  run,
 		Jobs: jobDetails,
 	}, nil
+}
+
+func (s *Service) queueJobAttempt(ctx context.Context, job *state.Job, attempt *state.JobAttempt, jobLogger *slog.Logger) error {
+	if err := s.store.TransitionJobState(ctx, job.ID, state.JobStateQueued); err != nil {
+		return err
+	}
+	job.State = state.JobStateQueued
+
+	if err := s.store.TransitionJobAttemptState(ctx, attempt.ID, state.JobStateQueued); err != nil {
+		return err
+	}
+	attempt.State = state.JobStateQueued
+
+	if jobLogger != nil {
+		jobLogger.Info("job queued", "event", "job_queued", "attempt_id", attempt.ID)
+	}
+	s.metrics.IncJob("queued")
+
+	if err := s.dispatcher.EnqueueJobAttempt(ctx, *attempt); err != nil {
+		if jobLogger != nil {
+			jobLogger.Error("enqueue attempt failed", "event", "enqueue_failed", "error", err)
+		}
+		s.metrics.IncFailure("enqueue_failed")
+		return fmt.Errorf("enqueue attempt %s: %w", attempt.ID, err)
+	}
+	return nil
 }
 
 // GetRunDetails returns read-only run and job data.
@@ -725,6 +786,13 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 			completeLogger.Error("run finalization failed", "event", "run_finalize_failed", "error", err)
 		}
 	} else {
+		if target == state.JobStateSucceeded && !isRunTerminal(run.State) {
+			if err := s.enqueueReadyDependents(ctx, job); err != nil {
+				s.metrics.IncFailure("enqueue_dependents_failed")
+				completeLogger.Error("enqueue dependents failed", "event", "enqueue_dependents_failed", "error", err)
+				return err
+			}
+		}
 		if err := s.finalizeRunIfReady(ctx, job.RunID); err != nil {
 			s.metrics.IncFailure("run_finalize_failed")
 			completeLogger.Error("run finalization failed", "event", "run_finalize_failed", "error", err)
@@ -732,6 +800,59 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 	}
 
 	return nil
+}
+
+func (s *Service) enqueueReadyDependents(ctx context.Context, job state.Job) error {
+	dependents, err := s.store.ListJobDependents(ctx, job.ID)
+	if err != nil {
+		return err
+	}
+	if len(dependents) == 0 {
+		return nil
+	}
+
+	for _, dependentID := range dependents {
+		ready, err := s.store.DependenciesSatisfied(ctx, dependentID)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			continue
+		}
+
+		dependent, err := s.store.GetJob(ctx, dependentID)
+		if err != nil {
+			return err
+		}
+		if dependent.State != state.JobStateCreated {
+			continue
+		}
+
+		attempts, err := s.store.ListJobAttempts(ctx, dependent.ID)
+		if err != nil {
+			return err
+		}
+		attempt, ok := latestAttempt(attempts)
+		if !ok || attempt.State != state.JobStateCreated {
+			continue
+		}
+
+		jobLogger := observability.WithJob(observability.WithRun(s.logger, dependent.RunID), dependent.ID)
+		if err := s.queueJobAttempt(ctx, &dependent, &attempt, jobLogger); err != nil {
+			if state.IsTransitionError(err) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func latestAttempt(attempts []state.JobAttempt) (state.JobAttempt, bool) {
+	if len(attempts) == 0 {
+		return state.JobAttempt{}, false
+	}
+	return attempts[len(attempts)-1], true
 }
 
 // CancelLease finalizes an attempt when a runner acknowledges cancellation.

@@ -43,7 +43,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 	}
 
 	discovery := discoverInputs(root)
-	hasGo := len(discovery.projects) > 0 || discovery.hasFile("go.mod") || discovery.hasFile("go.sum")
+	hasGo := len(discovery.projects) > 0 || discovery.hasFile("go.mod") || discovery.hasFile("go.sum") || discovery.hasFile("go.work") || discovery.hasFile("go.work.sum")
 
 	paths, err := gitChangedFiles(ctx, root, req.CommitSHA)
 	if err != nil {
@@ -60,7 +60,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 	impact := analyzeImpact(paths, discovery.projects, discovery.dependencyUnknown)
 	explain := buildExplain(discovery, impact)
 
-	return planForGo(impact, explain), nil
+	return planForGo(impact, explain, discovery.projects), nil
 }
 
 func (p DiffPlanner) fallbackPlan(ctx context.Context, req PlanRequest, reason string, err error) (PlanResult, error) {
@@ -91,6 +91,8 @@ func discoverInputs(repoRoot string) discoveryInputs {
 	candidates := []string{
 		"go.mod",
 		"go.sum",
+		"go.work",
+		"go.work.sum",
 		"package.json",
 		"Makefile",
 		"README.md",
@@ -138,6 +140,31 @@ type goModInfo struct {
 }
 
 func discoverGoProjects(repoRoot string) projectDiscovery {
+	goWorkPath := filepath.Join(repoRoot, "go.work")
+	if info, err := os.Stat(goWorkPath); err == nil && !info.IsDir() {
+		modules, parseErr := parseGoWork(goWorkPath)
+		if parseErr != nil || len(modules) == 0 {
+			fallback := discoverGoProjectsFromGoMod(repoRoot)
+			fallback.dependencyUnknown = true
+			return fallback
+		}
+		workspace := discoverGoProjectsFromGoWork(repoRoot, modules)
+		if len(workspace.projects) > 0 {
+			return workspace
+		}
+		fallback := discoverGoProjectsFromGoMod(repoRoot)
+		fallback.dependencyUnknown = true
+		return fallback
+	} else if err != nil && !os.IsNotExist(err) {
+		fallback := discoverGoProjectsFromGoMod(repoRoot)
+		fallback.dependencyUnknown = true
+		return fallback
+	}
+
+	return discoverGoProjectsFromGoMod(repoRoot)
+}
+
+func discoverGoProjectsFromGoMod(repoRoot string) projectDiscovery {
 	goModPaths, err := findFiles(repoRoot, "go.mod")
 	if err != nil {
 		return projectDiscovery{dependencyUnknown: true}
@@ -174,6 +201,63 @@ func discoverGoProjects(repoRoot string) projectDiscovery {
 		projects:          projects,
 		dependencyUnknown: dependencyUnknown,
 	}
+}
+
+func discoverGoProjectsFromGoWork(repoRoot string, modules []string) projectDiscovery {
+	projects := make([]project, 0, len(modules))
+	dependencyUnknown := false
+	for _, modulePath := range modules {
+		if modulePath == "" {
+			dependencyUnknown = true
+			continue
+		}
+
+		abs, rel, ok := resolveGoWorkModule(repoRoot, modulePath)
+		if !ok {
+			dependencyUnknown = true
+			continue
+		}
+
+		info := goModInfo{}
+		goModPath := filepath.Join(abs, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			var parseErr error
+			info, parseErr = parseGoMod(goModPath)
+			if parseErr != nil {
+				dependencyUnknown = true
+			}
+		} else {
+			dependencyUnknown = true
+		}
+
+		projects = append(projects, project{
+			Name:       projectNameFromRoot(rel),
+			Root:       rel,
+			Language:   "go",
+			ModulePath: info.ModulePath,
+			Requires:   info.Requires,
+		})
+	}
+
+	return projectDiscovery{
+		projects:          projects,
+		dependencyUnknown: dependencyUnknown,
+	}
+}
+
+func resolveGoWorkModule(repoRoot, modulePath string) (string, string, bool) {
+	abs := modulePath
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(repoRoot, modulePath)
+	}
+	abs = filepath.Clean(abs)
+
+	rel, err := filepath.Rel(repoRoot, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", "", false
+	}
+	rel = normalizeRepoPath(rel)
+	return abs, rel, true
 }
 
 func parseGoMod(path string) (goModInfo, error) {
@@ -235,13 +319,77 @@ func parseGoMod(path string) (goModInfo, error) {
 	return info, nil
 }
 
+func parseGoWork(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var modules []string
+	inUseBlock := false
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+			if line == "" {
+				continue
+			}
+		}
+
+		if strings.HasPrefix(line, "use ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] == "(" {
+				inUseBlock = true
+				continue
+			}
+			if len(fields) >= 2 {
+				modules = append(modules, fields[1])
+			}
+			continue
+		}
+
+		if inUseBlock {
+			if line == ")" {
+				inUseBlock = false
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 1 {
+				modules = append(modules, fields[0])
+			}
+		}
+	}
+
+	return uniqueStrings(modules), nil
+}
+
+func uniqueStrings(items []string) []string {
+	seen := make(map[string]struct{}, len(items))
+	unique := make([]string, 0, len(items))
+	for _, item := range items {
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		unique = append(unique, item)
+	}
+	return unique
+}
+
 func findFiles(repoRoot, name string) ([]string, error) {
 	var matches []string
 	skipDirs := map[string]struct{}{
-		".git":        {},
+		".git":         {},
 		"node_modules": {},
-		"vendor":      {},
-		".cache":      {},
+		"vendor":       {},
+		".cache":       {},
 	}
 
 	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
@@ -337,42 +485,65 @@ func analyzeImpact(paths []string, projects []project, dependencyUnknown bool) i
 	}
 }
 
-func planForGo(impact impactSummary, explain string) PlanResult {
+func planForGo(impact impactSummary, explain string, projects []project) PlanResult {
 	reasons := buildReasons(impact)
-	jobs := []PlannedJob{
-		{
-			Name:     "build",
+	projectRoots := buildProjectRootIndex(projects)
+	targetProjects := impact.ImpactedProjects
+	if len(targetProjects) == 0 {
+		targetProjects = projectNames(projects)
+	}
+	if len(targetProjects) == 0 {
+		targetProjects = []string{"root"}
+		if _, ok := projectRoots["root"]; !ok {
+			projectRoots["root"] = "."
+		}
+	}
+	sort.Strings(targetProjects)
+
+	jobs := make([]PlannedJob, 0, len(targetProjects))
+	for _, projectName := range targetProjects {
+		root := projectRoots[projectName]
+		if root == "" {
+			root = "."
+		}
+		buildName := jobNameForProject("build", projectName, root)
+		jobs = append(jobs, PlannedJob{
+			Name:     buildName,
 			Required: true,
 			Spec: protocol.JobSpec{
-				Name:    "build",
-				Workdir: ".",
+				Name:    buildName,
+				Workdir: root,
 				Steps:   []string{"go build ./..."},
 			},
-			Reason: reasons.build,
-		},
-	}
+			Reason: reasonForProject(reasons.build, projectName, root),
+		})
 
-	if !impact.DocsOnly {
-		jobs = append(jobs, PlannedJob{
-			Name:     "test",
-			Required: true,
-			Spec: protocol.JobSpec{
-				Name:    "test",
-				Workdir: ".",
-				Steps:   []string{"go test ./..."},
-			},
-			Reason: reasons.test,
-		})
-		jobs = append(jobs, PlannedJob{
-			Name:     "lint",
-			Required: false,
-			Spec: protocol.JobSpec{
-				Name:    "lint",
-				Workdir: ".",
-				Steps:   []string{"go vet ./..."},
-			},
-			Reason: reasons.lint,
-		})
+		if !impact.DocsOnly {
+			testName := jobNameForProject("test", projectName, root)
+			jobs = append(jobs, PlannedJob{
+				Name:     testName,
+				Required: true,
+				Spec: protocol.JobSpec{
+					Name:    testName,
+					Workdir: root,
+					Steps:   []string{"go test ./..."},
+				},
+				Reason:    reasonForProject(reasons.test, projectName, root),
+				DependsOn: []string{buildName},
+			})
+			lintName := jobNameForProject("lint", projectName, root)
+			jobs = append(jobs, PlannedJob{
+				Name:     lintName,
+				Required: false,
+				Spec: protocol.JobSpec{
+					Name:    lintName,
+					Workdir: root,
+					Steps:   []string{"go vet ./..."},
+				},
+				Reason:    reasonForProject(reasons.lint, projectName, root),
+				DependsOn: []string{buildName},
+			})
+		}
 	}
 
 	return PlanResult{
@@ -503,6 +674,8 @@ func isGlobalImpact(path string) bool {
 		return true
 	case lower == "go.mod", lower == "go.sum":
 		return true
+	case lower == "go.work", lower == "go.work.sum":
+		return true
 	case lower == "makefile":
 		return true
 	case lower == "dockerfile":
@@ -510,6 +683,32 @@ func isGlobalImpact(path string) bool {
 	default:
 		return false
 	}
+}
+
+func buildProjectRootIndex(projects []project) map[string]string {
+	roots := make(map[string]string, len(projects))
+	for _, project := range projects {
+		roots[project.Name] = project.Root
+	}
+	return roots
+}
+
+func jobNameForProject(base, projectName, root string) string {
+	if isRootProject(projectName, root) {
+		return base
+	}
+	return fmt.Sprintf("%s:%s", base, projectName)
+}
+
+func reasonForProject(reason, projectName, root string) string {
+	if isRootProject(projectName, root) {
+		return reason
+	}
+	return fmt.Sprintf("%s (project: %s)", reason, projectName)
+}
+
+func isRootProject(projectName, root string) bool {
+	return projectName == "root" || root == "."
 }
 
 func isCodePath(path string) bool {

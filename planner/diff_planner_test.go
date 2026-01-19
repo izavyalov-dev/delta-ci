@@ -1,7 +1,10 @@
 package planner
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -109,5 +112,139 @@ func TestAnalyzeImpactPrefersSpecificOwner(t *testing.T) {
 	}
 	if !reflect.DeepEqual(impact.ImpactedProjects, []string{"services/api"}) {
 		t.Fatalf("unexpected impacted projects: %v", impact.ImpactedProjects)
+	}
+}
+
+func TestPlanForGoPerProjectJobs(t *testing.T) {
+	projects := []project{
+		{
+			Name:       "services/api",
+			Root:       "services/api",
+			Language:   "go",
+			ModulePath: "example.com/api",
+		},
+		{
+			Name:       "libs/lib",
+			Root:       "libs/lib",
+			Language:   "go",
+			ModulePath: "example.com/lib",
+		},
+	}
+
+	impact := analyzeImpact([]string{"services/api/main.go"}, projects, false)
+	plan := planForGo(impact, "explain", projects)
+	if len(plan.Jobs) != 3 {
+		t.Fatalf("expected 3 jobs, got %d", len(plan.Jobs))
+	}
+
+	expectedNames := []string{"build:services/api", "test:services/api", "lint:services/api"}
+	for i, job := range plan.Jobs {
+		if job.Name != expectedNames[i] {
+			t.Fatalf("unexpected job name %q, expected %q", job.Name, expectedNames[i])
+		}
+		if job.Spec.Workdir != "services/api" {
+			t.Fatalf("unexpected workdir %q for %s", job.Spec.Workdir, job.Name)
+		}
+		if !strings.Contains(job.Reason, "project: services/api") {
+			t.Fatalf("expected project reason for %s, got %q", job.Name, job.Reason)
+		}
+		if job.Name != "build:services/api" && !reflect.DeepEqual(job.DependsOn, []string{"build:services/api"}) {
+			t.Fatalf("expected dependency on build for %s, got %v", job.Name, job.DependsOn)
+		}
+		if job.Name == "build:services/api" && len(job.DependsOn) != 0 {
+			t.Fatalf("expected no dependencies for %s, got %v", job.Name, job.DependsOn)
+		}
+	}
+}
+
+func TestPlanForGoRootJobNames(t *testing.T) {
+	projects := []project{
+		{
+			Name:       "root",
+			Root:       ".",
+			Language:   "go",
+			ModulePath: "example.com/root",
+		},
+	}
+
+	impact := analyzeImpact([]string{"main.go"}, projects, false)
+	plan := planForGo(impact, "explain", projects)
+	if len(plan.Jobs) != 3 {
+		t.Fatalf("expected 3 jobs, got %d", len(plan.Jobs))
+	}
+	if plan.Jobs[0].Name != "build" {
+		t.Fatalf("unexpected build job name %q", plan.Jobs[0].Name)
+	}
+	if len(plan.Jobs[0].DependsOn) != 0 {
+		t.Fatalf("expected no dependencies for build, got %v", plan.Jobs[0].DependsOn)
+	}
+}
+
+func TestParseGoWork(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.work")
+	content := `go 1.22
+
+use (
+	./services/api
+	./libs/lib // comment
+)
+
+use ./tools
+`
+	writeFile(t, path, content)
+
+	modules, err := parseGoWork(path)
+	if err != nil {
+		t.Fatalf("parse go.work: %v", err)
+	}
+
+	expected := []string{"./services/api", "./libs/lib", "./tools"}
+	if !reflect.DeepEqual(modules, expected) {
+		t.Fatalf("unexpected modules: %v", modules)
+	}
+}
+
+func TestDiscoverGoProjectsWithGoWork(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.work"), `go 1.22
+
+use (
+	./apps/api
+	./libs/lib
+)
+`)
+
+	writeGoMod(t, filepath.Join(dir, "apps", "api"), "example.com/api")
+	writeGoMod(t, filepath.Join(dir, "libs", "lib"), "example.com/lib")
+
+	discovery := discoverGoProjects(dir)
+	if discovery.dependencyUnknown {
+		t.Fatalf("expected dependency graph to be known")
+	}
+	if len(discovery.projects) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(discovery.projects))
+	}
+
+	names := projectNames(discovery.projects)
+	expected := []string{"apps/api", "libs/lib"}
+	if !reflect.DeepEqual(names, expected) {
+		t.Fatalf("unexpected project names: %v", names)
+	}
+}
+
+func writeGoMod(t *testing.T, dir, modulePath string) {
+	t.Helper()
+	content := "module " + modulePath + "\n\ngo 1.22\n"
+	writeFile(t, filepath.Join(dir, "go.mod"), content)
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
 }

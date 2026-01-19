@@ -32,6 +32,9 @@ var runReruns string
 //go:embed 0008_failure_explanations.sql
 var failureExplanations string
 
+//go:embed 0009_job_dependencies.sql
+var jobDependencies string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
@@ -42,4 +45,5 @@ var All = []Migration{
 	{ID: "0006_status_reports", Script: statusReports},
 	{ID: "0007_run_reruns", Script: runReruns},
 	{ID: "0008_failure_explanations", Script: failureExplanations},
+	{ID: "0009_job_dependencies", Script: jobDependencies},
 }

@@ -49,11 +49,11 @@ Success criteria:
 
 ## Milestone 2.2 — Monorepo Support (Basic)
 
-- [ ] Detect workspace roots and project boundaries
-- [ ] Build per-project job graphs and aggregate into a run plan
-- [ ] Handle shared config changes (e.g., tooling, ci.ai.yaml) as global impact
-- [ ] Preserve allow-failure vs required classification per project
-- [ ] Ensure explainability names affected projects explicitly
+- [x] Detect workspace roots and project boundaries
+- [x] Build per-project job graphs and aggregate into a run plan
+- [x] Handle shared config changes (e.g., tooling, ci.ai.yaml) as global impact
+- [x] Preserve allow-failure vs required classification per project
+- [x] Ensure explainability names affected projects explicitly
 
 Success criteria:
 - scoped changes run only affected project jobs

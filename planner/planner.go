@@ -27,10 +27,11 @@ type PlanResult struct {
 
 // PlannedJob describes a single job to schedule.
 type PlannedJob struct {
-	Name     string
-	Required bool
-	Spec     protocol.JobSpec
-	Reason   string
+	Name      string
+	Required  bool
+	Spec      protocol.JobSpec
+	Reason    string
+	DependsOn []string
 }
 
 // StaticPlanner returns a fixed list of jobs. This keeps Phase 0 simple while
