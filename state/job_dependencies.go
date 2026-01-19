@@ -43,6 +43,32 @@ ORDER BY job_id ASC
 	return dependents, rows.Err()
 }
 
+func (s *Store) ListJobDependencies(ctx context.Context, jobID string) ([]string, error) {
+	if jobID == "" {
+		return nil, errors.New("job id required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT depends_on_job_id
+FROM job_dependencies
+WHERE job_id = $1
+ORDER BY depends_on_job_id ASC
+`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dependencies []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		dependencies = append(dependencies, id)
+	}
+	return dependencies, rows.Err()
+}
+
 func (s *Store) DependenciesSatisfied(ctx context.Context, jobID string) (bool, error) {
 	if jobID == "" {
 		return false, errors.New("job id required")

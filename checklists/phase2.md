@@ -63,11 +63,11 @@ Success criteria:
 
 ## Milestone 2.3 — Recipe Persistence and Reuse
 
-- [ ] Define recipe schema (jobs, order, tools, caches, artifacts)
-- [ ] Define repository fingerprint inputs and hashing
-- [ ] Persist recipes immutably with fingerprint and timestamps
-- [ ] Implement selection order: config > recipe match > discovery > fallback
-- [ ] Expose recipe usage and selection rationale in plan output
+- [x] Define recipe schema (jobs, order, tools, caches, artifacts)
+- [x] Define repository fingerprint inputs and hashing
+- [x] Persist recipes immutably with fingerprint and timestamps
+- [x] Implement selection order: config > recipe match > discovery > fallback
+- [x] Expose recipe usage and selection rationale in plan output
 
 Success criteria:
 - stable repos reuse recipes deterministically

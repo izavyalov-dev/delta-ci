@@ -233,6 +233,27 @@ use (
 	}
 }
 
+func TestComputeRepoFingerprintChanges(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(dir, "go.sum"), "example.com/root v0.0.0-00010101000000-000000000000 h1:deadbeef\n")
+
+	fingerprintA, err := computeRepoFingerprint(dir)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+
+	writeFile(t, filepath.Join(dir, "go.sum"), "example.com/root v0.0.0-00010101000000-000000000000 h1:cafebabe\n")
+	fingerprintB, err := computeRepoFingerprint(dir)
+	if err != nil {
+		t.Fatalf("fingerprint after update: %v", err)
+	}
+
+	if fingerprintA == fingerprintB {
+		t.Fatalf("expected fingerprint to change")
+	}
+}
+
 func writeGoMod(t *testing.T, dir, modulePath string) {
 	t.Helper()
 	content := "module " + modulePath + "\n\ngo 1.22\n"

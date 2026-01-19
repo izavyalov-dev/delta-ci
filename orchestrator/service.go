@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
@@ -254,6 +255,10 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 	if planResult.Explain != "" {
 		runLogger.Info("plan generated", "event", "plan_generated", "explain", planResult.Explain)
 	}
+	if err := s.recordRunPlan(ctx, run, planResult); err != nil {
+		runLogger.Error("record run plan failed", "event", "run_plan_failed", "error", err)
+		s.metrics.IncFailure("run_plan_failed")
+	}
 
 	jobRecords := make([]plannedJobRecord, 0, len(planResult.Jobs))
 	jobIndex := make(map[string]int, len(planResult.Jobs))
@@ -377,6 +382,30 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 		Run:  run,
 		Jobs: jobDetails,
 	}, nil
+}
+
+func (s *Service) recordRunPlan(ctx context.Context, run state.Run, plan planner.PlanResult) error {
+	source := plan.RecipeSource
+	if source == "" {
+		source = planner.PlanSourceFallback
+	}
+
+	record := state.RunPlan{
+		RunID:        run.ID,
+		RepoID:       run.RepoID,
+		Fingerprint:  plan.Fingerprint,
+		RecipeSource: source,
+	}
+	if plan.RecipeID != "" {
+		id := plan.RecipeID
+		record.RecipeID = &id
+	}
+	if plan.RecipeVersion > 0 {
+		version := plan.RecipeVersion
+		record.RecipeVersion = &version
+	}
+
+	return s.store.RecordRunPlan(ctx, record)
 }
 
 func (s *Service) queueJobAttempt(ctx context.Context, job *state.Job, attempt *state.JobAttempt, jobLogger *slog.Logger) error {
@@ -1028,9 +1057,137 @@ func (s *Service) finalizeRunIfReady(ctx context.Context, runID string) error {
 		s.metrics.IncRun("success")
 		s.logger.Info("run succeeded", "event", "run_succeeded", "run_id", runID)
 		s.reportRun(ctx, runID)
+		if err := s.persistRecipeIfNeeded(ctx, run); err != nil {
+			s.metrics.IncFailure("recipe_persist_failed")
+			s.logger.Error("persist recipe failed", "event", "recipe_persist_failed", "run_id", runID, "error", err)
+		}
 	}
 
 	return nil
+}
+
+func (s *Service) persistRecipeIfNeeded(ctx context.Context, run state.Run) error {
+	plan, err := s.store.GetRunPlan(ctx, run.ID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if plan.RecipeSource != planner.PlanSourceDiscovery {
+		return nil
+	}
+	if plan.Fingerprint == "" {
+		return nil
+	}
+
+	jobs, err := s.store.ListJobsByRun(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	plannedJobs, err := s.buildRecipeJobs(ctx, jobs)
+	if err != nil {
+		return err
+	}
+	recipeJSON, err := json.Marshal(plannedJobs)
+	if err != nil {
+		return err
+	}
+
+	recipeRecord := state.RecipeRecord{
+		ID:          randomID("recipe"),
+		RepoID:      run.RepoID,
+		Fingerprint: plan.Fingerprint,
+		Version:     1,
+		Source:      plan.RecipeSource,
+		RecipeJSON:  recipeJSON,
+	}
+
+	createdRecord, created, err := s.store.CreateRecipe(ctx, recipeRecord)
+	if err != nil {
+		return err
+	}
+
+	if created {
+		s.logger.Info("recipe persisted", "event", "recipe_persisted", "recipe_id", createdRecord.ID, "run_id", run.ID)
+		return s.updateRunPlanRecipe(ctx, run, plan, createdRecord.ID, createdRecord.Version)
+	}
+
+	existing, ok, err := s.store.FindRecipeByFingerprint(ctx, run.RepoID, plan.Fingerprint)
+	if err != nil || !ok {
+		return err
+	}
+	_ = s.store.TouchRecipeLastUsed(ctx, existing.ID, time.Now().UTC())
+	return s.updateRunPlanRecipe(ctx, run, plan, existing.ID, existing.Version)
+}
+
+func (s *Service) updateRunPlanRecipe(ctx context.Context, run state.Run, plan state.RunPlan, recipeID string, version int) error {
+	if recipeID == "" {
+		return nil
+	}
+	record := state.RunPlan{
+		RunID:        run.ID,
+		RepoID:       run.RepoID,
+		Fingerprint:  plan.Fingerprint,
+		RecipeSource: plan.RecipeSource,
+	}
+	record.RecipeID = &recipeID
+	if version > 0 {
+		record.RecipeVersion = &version
+	}
+	return s.store.RecordRunPlan(ctx, record)
+}
+
+func (s *Service) buildRecipeJobs(ctx context.Context, jobs []state.Job) ([]planner.PlannedJob, error) {
+	jobNameByID := make(map[string]string, len(jobs))
+	for _, job := range jobs {
+		jobNameByID[job.ID] = job.Name
+	}
+
+	plannedJobs := make([]planner.PlannedJob, 0, len(jobs))
+	for _, job := range jobs {
+		specJSON, err := s.store.GetJobSpec(ctx, job.ID)
+		if err != nil {
+			return nil, err
+		}
+		var spec protocol.JobSpec
+		if err := json.Unmarshal(specJSON, &spec); err != nil {
+			return nil, err
+		}
+		if spec.Name == "" {
+			spec.Name = job.Name
+		}
+
+		dependencies, err := s.store.ListJobDependencies(ctx, job.ID)
+		if err != nil {
+			return nil, err
+		}
+		dependencyNames := make([]string, 0, len(dependencies))
+		for _, dependencyID := range dependencies {
+			name, ok := jobNameByID[dependencyID]
+			if !ok {
+				return nil, fmt.Errorf("unknown dependency job %s", dependencyID)
+			}
+			dependencyNames = append(dependencyNames, name)
+		}
+		sort.Strings(dependencyNames)
+
+		plannedJobs = append(plannedJobs, planner.PlannedJob{
+			Name:      job.Name,
+			Required:  job.Required,
+			Spec:      spec,
+			DependsOn: dependencyNames,
+		})
+	}
+
+	sort.Slice(plannedJobs, func(i, j int) bool {
+		return plannedJobs[i].Name < plannedJobs[j].Name
+	})
+	return plannedJobs, nil
 }
 
 func (s *Service) finalizeCancelIfReady(ctx context.Context, runID string) error {

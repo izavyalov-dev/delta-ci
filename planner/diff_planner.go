@@ -3,6 +3,8 @@ package planner
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -23,44 +25,86 @@ const (
 type DiffPlanner struct {
 	RepoRoot string
 	Fallback Planner
+	Recipes  RecipeStore
 }
 
 // NewDiffPlanner constructs a diff-aware planner with a fallback.
-func NewDiffPlanner(repoRoot string, fallback Planner) DiffPlanner {
+func NewDiffPlanner(repoRoot string, fallback Planner, recipes RecipeStore) DiffPlanner {
 	if fallback == nil {
 		fallback = StaticPlanner{}
 	}
 	return DiffPlanner{
 		RepoRoot: repoRoot,
 		Fallback: fallback,
+		Recipes:  recipes,
 	}
 }
 
 func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error) {
 	root, err := resolveRepoRoot(p.RepoRoot)
 	if err != nil {
-		return p.fallbackPlan(ctx, req, "repo root unavailable", err)
+		result, planErr := p.fallbackPlan(ctx, req, "repo root unavailable", err)
+		if planErr != nil {
+			return PlanResult{}, planErr
+		}
+		result.RecipeSource = PlanSourceFallback
+		return result, nil
 	}
 
 	discovery := discoverInputs(root)
+	fingerprint, fingerprintErr := computeRepoFingerprint(root)
 	hasGo := len(discovery.projects) > 0 || discovery.hasFile("go.mod") || discovery.hasFile("go.sum") || discovery.hasFile("go.work") || discovery.hasFile("go.work.sum")
 
-	paths, err := gitChangedFiles(ctx, root, req.CommitSHA)
-	if err != nil {
-		return p.fallbackPlan(ctx, req, "diff unavailable", err)
-	}
-	if len(paths) == 0 {
-		return p.fallbackPlan(ctx, req, "diff empty", nil)
+	if discovery.hasFile("ci.ai.yaml") {
+		result, planErr := p.fallbackPlan(ctx, req, "explicit config present (ci.ai.yaml)", nil)
+		if planErr != nil {
+			return PlanResult{}, planErr
+		}
+		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceConfig, "")
+		return result, nil
 	}
 
 	if !hasGo {
-		return p.fallbackPlan(ctx, req, "no supported build files detected", nil)
+		result, planErr := p.fallbackPlan(ctx, req, "no supported build files detected", nil)
+		if planErr != nil {
+			return PlanResult{}, planErr
+		}
+		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceFallback, "")
+		return result, nil
+	}
+
+	recipeResult, recipeUsed, recipeNote, err := p.planFromRecipe(ctx, req, discovery, root, fingerprint, fingerprintErr)
+	if err != nil {
+		return PlanResult{}, err
+	}
+	if recipeUsed {
+		return recipeResult, nil
+	}
+
+	paths, err := gitChangedFiles(ctx, root, req.CommitSHA)
+	if err != nil {
+		result, planErr := p.fallbackPlan(ctx, req, "diff unavailable", err)
+		if planErr != nil {
+			return PlanResult{}, planErr
+		}
+		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceFallback, recipeNote)
+		return result, nil
+	}
+	if len(paths) == 0 {
+		result, planErr := p.fallbackPlan(ctx, req, "diff empty", nil)
+		if planErr != nil {
+			return PlanResult{}, planErr
+		}
+		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceFallback, recipeNote)
+		return result, nil
 	}
 
 	impact := analyzeImpact(paths, discovery.projects, discovery.dependencyUnknown)
 	explain := buildExplain(discovery, impact)
 
-	return planForGo(impact, explain, discovery.projects), nil
+	result := planForGo(impact, explain, discovery.projects)
+	applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceDiscovery, recipeNote)
+	return result, nil
 }
 
 func (p DiffPlanner) fallbackPlan(ctx context.Context, req PlanRequest, reason string, err error) (PlanResult, error) {
@@ -79,6 +123,39 @@ func (p DiffPlanner) fallbackPlan(ctx context.Context, req PlanRequest, reason s
 		}
 	}
 	return result, nil
+}
+
+func (p DiffPlanner) planFromRecipe(ctx context.Context, req PlanRequest, discovery discoveryInputs, repoRoot, fingerprint string, fingerprintErr error) (PlanResult, bool, string, error) {
+	if p.Recipes == nil {
+		return PlanResult{}, false, "", nil
+	}
+	if fingerprint == "" {
+		if fingerprintErr != nil {
+			return PlanResult{}, false, "recipe lookup skipped: fingerprint unavailable", nil
+		}
+		return PlanResult{}, false, "recipe lookup skipped: fingerprint missing", nil
+	}
+
+	recipe, ok, err := p.Recipes.FindRecipe(ctx, req.RepoID, fingerprint)
+	if err != nil {
+		return PlanResult{}, false, fmt.Sprintf("recipe lookup failed: %v", err), nil
+	}
+	if !ok {
+		return PlanResult{}, false, "no recipe matched fingerprint", nil
+	}
+
+	paths, diffErr := gitChangedFiles(ctx, repoRoot, req.CommitSHA)
+	explain := buildRecipeExplain(discovery, paths, diffErr, recipe, fingerprint)
+	result := PlanResult{
+		Jobs:          jobsFromRecipe(recipe),
+		Explain:       explain,
+		Fingerprint:   fingerprint,
+		RecipeSource:  PlanSourceRecipe,
+		RecipeID:      recipe.ID,
+		RecipeVersion: recipe.Version,
+	}
+	applyPlanMetadata(&result, "", fingerprintErr, "", "")
+	return result, true, "", nil
 }
 
 type discoveryInputs struct {
@@ -367,6 +444,72 @@ func parseGoWork(path string) ([]string, error) {
 	return uniqueStrings(modules), nil
 }
 
+func computeRepoFingerprint(repoRoot string) (string, error) {
+	names := []string{
+		"go.mod",
+		"go.sum",
+		"go.work",
+		"go.work.sum",
+		"package.json",
+		"package-lock.json",
+		"pnpm-lock.yaml",
+		"yarn.lock",
+		"Makefile",
+		"justfile",
+		"Taskfile.yml",
+		"pom.xml",
+		"build.gradle",
+		"build.gradle.kts",
+		"settings.gradle",
+		"settings.gradle.kts",
+		"Cargo.toml",
+		"WORKSPACE",
+		"BUILD.bazel",
+		"Dockerfile",
+		"ci.ai.yaml",
+	}
+
+	nameSet := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		nameSet[name] = struct{}{}
+	}
+
+	paths, err := findFilesByNames(repoRoot, nameSet)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", errors.New("no fingerprint inputs found")
+	}
+
+	sort.Strings(paths)
+	hasher := sha256.New()
+	for _, path := range paths {
+		rel, err := filepath.Rel(repoRoot, path)
+		if err != nil {
+			return "", err
+		}
+		rel = normalizeRepoPath(rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write([]byte(rel)); err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write([]byte{0}); err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write(data); err != nil {
+			return "", err
+		}
+		if _, err := hasher.Write([]byte{0}); err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
 func uniqueStrings(items []string) []string {
 	seen := make(map[string]struct{}, len(items))
 	unique := make([]string, 0, len(items))
@@ -410,6 +553,33 @@ func findFiles(repoRoot, name string) ([]string, error) {
 	return matches, err
 }
 
+func findFilesByNames(repoRoot string, names map[string]struct{}) ([]string, error) {
+	var matches []string
+	skipDirs := map[string]struct{}{
+		".git":         {},
+		"node_modules": {},
+		"vendor":       {},
+		".cache":       {},
+	}
+
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if _, skip := skipDirs[d.Name()]; skip {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if _, ok := names[d.Name()]; ok {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches, err
+}
+
 func normalizeRepoPath(path string) string {
 	path = filepath.ToSlash(path)
 	path = strings.TrimPrefix(path, "./")
@@ -425,6 +595,20 @@ func projectNameFromRoot(root string) string {
 		return "root"
 	}
 	return root
+}
+
+func formatPaths(paths []string, limit int) string {
+	if len(paths) == 0 {
+		return "(none)"
+	}
+	return formatList(paths, limit)
+}
+
+func shortFingerprint(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }
 
 type impactSummary struct {
@@ -571,21 +755,7 @@ func buildReasons(impact impactSummary) reasonSet {
 func buildExplain(discovery discoveryInputs, impact impactSummary) string {
 	var b bytes.Buffer
 	b.WriteString("diff-aware planner v1: ")
-	if len(discovery.files) == 0 {
-		b.WriteString("no discovery inputs found")
-	} else {
-		files := make([]string, 0, len(discovery.files))
-		for file := range discovery.files {
-			files = append(files, file)
-		}
-		sort.Strings(files)
-		b.WriteString("discovered ")
-		b.WriteString(strings.Join(files, ", "))
-	}
-	if len(discovery.projects) > 0 {
-		b.WriteString("; projects: ")
-		b.WriteString(formatList(projectNames(discovery.projects), 6))
-	}
+	appendDiscoveryExplain(&b, discovery)
 	b.WriteString("; ")
 	b.WriteString("changed paths: ")
 	b.WriteString(strings.Join(impact.Paths, ", "))
@@ -613,6 +783,84 @@ func buildExplain(discovery discoveryInputs, impact impactSummary) string {
 		b.WriteString("; dependency graph incomplete")
 	}
 	return b.String()
+}
+
+func appendDiscoveryExplain(b *bytes.Buffer, discovery discoveryInputs) {
+	if len(discovery.files) == 0 {
+		b.WriteString("no discovery inputs found")
+	} else {
+		files := make([]string, 0, len(discovery.files))
+		for file := range discovery.files {
+			files = append(files, file)
+		}
+		sort.Strings(files)
+		b.WriteString("discovered ")
+		b.WriteString(strings.Join(files, ", "))
+	}
+	if len(discovery.projects) > 0 {
+		b.WriteString("; projects: ")
+		b.WriteString(formatList(projectNames(discovery.projects), 6))
+	}
+}
+
+func buildRecipeExplain(discovery discoveryInputs, paths []string, diffErr error, recipe Recipe, fingerprint string) string {
+	var b bytes.Buffer
+	b.WriteString("diff-aware planner v1: ")
+	appendDiscoveryExplain(&b, discovery)
+	if diffErr != nil {
+		b.WriteString("; diff unavailable")
+	} else {
+		b.WriteString("; changed paths: ")
+		b.WriteString(formatPaths(paths, 6))
+	}
+	if fingerprint != "" {
+		b.WriteString("; fingerprint ")
+		b.WriteString(shortFingerprint(fingerprint))
+	}
+	b.WriteString("; recipe ")
+	b.WriteString(recipe.ID)
+	if recipe.Version > 0 {
+		fmt.Fprintf(&b, " v%d", recipe.Version)
+	}
+	return b.String()
+}
+
+func jobsFromRecipe(recipe Recipe) []PlannedJob {
+	jobs := make([]PlannedJob, 0, len(recipe.Jobs))
+	reason := fmt.Sprintf("recipe %s v%d", recipe.ID, recipe.Version)
+	for _, job := range recipe.Jobs {
+		job.Reason = reason
+		jobs = append(jobs, job)
+	}
+	return jobs
+}
+
+func applyPlanMetadata(result *PlanResult, fingerprint string, fingerprintErr error, source string, note string) {
+	if result == nil {
+		return
+	}
+	if fingerprint != "" {
+		result.Fingerprint = fingerprint
+	}
+	if source != "" {
+		result.RecipeSource = source
+	}
+	if fingerprintErr != nil {
+		result.Explain = appendExplain(result.Explain, fmt.Sprintf("fingerprint unavailable: %v", fingerprintErr))
+	}
+	if note != "" {
+		result.Explain = appendExplain(result.Explain, note)
+	}
+}
+
+func appendExplain(base, note string) string {
+	if note == "" {
+		return base
+	}
+	if base == "" {
+		return note
+	}
+	return base + "; " + note
 }
 
 func gitChangedFiles(ctx context.Context, repoRoot, commitSHA string) ([]string, error) {

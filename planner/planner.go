@@ -21,8 +21,12 @@ type PlanRequest struct {
 
 // PlanResult is the outcome of the planning step.
 type PlanResult struct {
-	Jobs    []PlannedJob
-	Explain string
+	Jobs          []PlannedJob
+	Explain       string
+	Fingerprint   string
+	RecipeSource  string
+	RecipeID      string
+	RecipeVersion int
 }
 
 // PlannedJob describes a single job to schedule.
@@ -33,6 +37,13 @@ type PlannedJob struct {
 	Reason    string
 	DependsOn []string
 }
+
+const (
+	PlanSourceConfig    = "config"
+	PlanSourceRecipe    = "recipe"
+	PlanSourceDiscovery = "discovery"
+	PlanSourceFallback  = "fallback"
+)
 
 // StaticPlanner returns a fixed list of jobs. This keeps Phase 0 simple while
 // preserving the planner contract.
