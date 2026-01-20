@@ -57,7 +57,7 @@ Success criteria:
 
 Success criteria:
 - scoped changes run only affected project jobs
-- global changes run all required jobs
+- global changes run all required jobs 
 
 ---
 
