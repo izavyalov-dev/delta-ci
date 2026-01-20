@@ -140,6 +140,7 @@ Returns:
 *	lease IDs are never returned; artifacts is an array (empty when none)
 *	artifact URIs are untrusted input and must be sanitized before use
 *	failure explanations are advisory and may be empty
+*	failure explanations include rule versions and classification signals when available
 
 Example response:
 ```json
@@ -194,6 +195,22 @@ Example response:
           "category": "USER",
           "summary": "Test step failed (exit code 1).",
           "confidence": "MEDIUM",
+          "rule_version": "v2",
+          "signals": {
+            "exit_code": 1,
+            "attempt_number": 1,
+            "duration_seconds": 240,
+            "cache_events": [
+              {
+                "type": "deps",
+                "key": "go:deps:...",
+                "hit": false,
+                "read_only": true
+              }
+            ],
+            "artifact_types": ["log"],
+            "has_log": true
+          },
           "details": "Observed: exit status 1 | Log: s3://delta-ci-artifacts/runs/run_456/jobs/job_123/log.txt",
           "created_at": "2026-01-12T08:05:01Z"
         }

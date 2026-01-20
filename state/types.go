@@ -95,6 +95,33 @@ const (
 	FailureConfidenceHigh   FailureConfidence = "HIGH"
 )
 
+// CacheEventSignal captures cache behavior relevant to failure analysis.
+type CacheEventSignal struct {
+	Type     string `json:"type"`
+	Key      string `json:"key"`
+	Hit      bool   `json:"hit"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+}
+
+// FailureSignals capture deterministic inputs used for classification.
+type FailureSignals struct {
+	ExitCode        int                `json:"exit_code,omitempty"`
+	AttemptNumber   int                `json:"attempt_number,omitempty"`
+	DurationSeconds int                `json:"duration_seconds,omitempty"`
+	CacheEvents     []CacheEventSignal `json:"cache_events,omitempty"`
+	ArtifactTypes   []string           `json:"artifact_types,omitempty"`
+	HasLog          bool               `json:"has_log,omitempty"`
+}
+
+func (s FailureSignals) IsEmpty() bool {
+	return s.ExitCode == 0 &&
+		s.AttemptNumber == 0 &&
+		s.DurationSeconds == 0 &&
+		len(s.CacheEvents) == 0 &&
+		len(s.ArtifactTypes) == 0 &&
+		!s.HasLog
+}
+
 // FailureExplanation summarizes why a job attempt failed.
 type FailureExplanation struct {
 	ID           int64             `json:"id"`
@@ -103,6 +130,8 @@ type FailureExplanation struct {
 	Summary      string            `json:"summary"`
 	Confidence   FailureConfidence `json:"confidence"`
 	Details      string            `json:"details,omitempty"`
+	RuleVersion  string            `json:"rule_version,omitempty"`
+	Signals      FailureSignals    `json:"signals,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 }
 

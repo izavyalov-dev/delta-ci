@@ -33,11 +33,11 @@ Correctness, explainability, and safety remain mandatory.
 
 ## Milestone 3.1 — Structured Failure Classification v2
 
-- [ ] Expand rule-based classification signals (exit codes, timings, retries)
-- [ ] Include cache events and artifact metadata as signals
-- [ ] Persist classification signals and confidence per attempt
-- [ ] Expose classification in APIs and GitHub summaries
-- [ ] Add tests for deterministic classification paths
+- [x] Expand rule-based classification signals (exit codes, timings, retries)
+- [x] Include cache events and artifact metadata as signals
+- [x] Persist classification signals and confidence per attempt
+- [x] Expose classification in APIs and GitHub summaries
+- [x] Add tests for deterministic classification paths
 
 Success criteria:
 - identical inputs always yield identical classifications

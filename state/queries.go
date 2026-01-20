@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -408,30 +409,39 @@ func (s *Store) RecordFailureExplanation(ctx context.Context, explanation Failur
 		explanation.Confidence = FailureConfidenceLow
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO job_failure_explanations (job_attempt_id, category, summary, confidence, details)
-VALUES ($1, $2, $3, $4, $5)
+	signalsJSON, err := marshalFailureSignals(explanation.Signals)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO job_failure_explanations (job_attempt_id, category, summary, confidence, details, rule_version, signals)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (job_attempt_id)
 DO UPDATE SET category = EXCLUDED.category,
               summary = EXCLUDED.summary,
               confidence = EXCLUDED.confidence,
               details = EXCLUDED.details,
+              rule_version = EXCLUDED.rule_version,
+              signals = EXCLUDED.signals,
               created_at = NOW()
-`, explanation.JobAttemptID, explanation.Category, explanation.Summary, explanation.Confidence, nullableString(explanation.Details))
+`, explanation.JobAttemptID, explanation.Category, explanation.Summary, explanation.Confidence, nullableString(explanation.Details), nullableString(explanation.RuleVersion), signalsJSON)
 	return err
 }
 
 // GetFailureExplanationByAttempt fetches a failure explanation for a job attempt.
 func (s *Store) GetFailureExplanationByAttempt(ctx context.Context, attemptID string) (FailureExplanation, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, job_attempt_id, category, summary, confidence, details, created_at
+SELECT id, job_attempt_id, category, summary, confidence, details, rule_version, signals, created_at
 FROM job_failure_explanations
 WHERE job_attempt_id = $1
 `, attemptID)
 
 	var explanation FailureExplanation
 	var details sql.NullString
-	if err := row.Scan(&explanation.ID, &explanation.JobAttemptID, &explanation.Category, &explanation.Summary, &explanation.Confidence, &details, &explanation.CreatedAt); err != nil {
+	var ruleVersion sql.NullString
+	var signalsJSON []byte
+	if err := row.Scan(&explanation.ID, &explanation.JobAttemptID, &explanation.Category, &explanation.Summary, &explanation.Confidence, &details, &ruleVersion, &signalsJSON, &explanation.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return FailureExplanation{}, fmt.Errorf("%w: failure explanation for attempt %s", ErrNotFound, attemptID)
 		}
@@ -440,13 +450,23 @@ WHERE job_attempt_id = $1
 	if details.Valid {
 		explanation.Details = details.String
 	}
+	if ruleVersion.Valid {
+		explanation.RuleVersion = ruleVersion.String
+	}
+	if len(signalsJSON) > 0 {
+		signals, err := unmarshalFailureSignals(signalsJSON)
+		if err != nil {
+			return FailureExplanation{}, err
+		}
+		explanation.Signals = signals
+	}
 	return explanation, nil
 }
 
 // ListFailureExplanationsByJob returns failure explanations for a job.
 func (s *Store) ListFailureExplanationsByJob(ctx context.Context, jobID string) ([]FailureExplanation, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT e.id, e.job_attempt_id, e.category, e.summary, e.confidence, e.details, e.created_at
+SELECT e.id, e.job_attempt_id, e.category, e.summary, e.confidence, e.details, e.rule_version, e.signals, e.created_at
 FROM job_failure_explanations e
 JOIN job_attempts ja ON ja.id = e.job_attempt_id
 WHERE ja.job_id = $1
@@ -461,11 +481,23 @@ ORDER BY e.created_at DESC, e.id DESC
 	for rows.Next() {
 		var explanation FailureExplanation
 		var details sql.NullString
-		if err := rows.Scan(&explanation.ID, &explanation.JobAttemptID, &explanation.Category, &explanation.Summary, &explanation.Confidence, &details, &explanation.CreatedAt); err != nil {
+		var ruleVersion sql.NullString
+		var signalsJSON []byte
+		if err := rows.Scan(&explanation.ID, &explanation.JobAttemptID, &explanation.Category, &explanation.Summary, &explanation.Confidence, &details, &ruleVersion, &signalsJSON, &explanation.CreatedAt); err != nil {
 			return nil, err
 		}
 		if details.Valid {
 			explanation.Details = details.String
+		}
+		if ruleVersion.Valid {
+			explanation.RuleVersion = ruleVersion.String
+		}
+		if len(signalsJSON) > 0 {
+			signals, err := unmarshalFailureSignals(signalsJSON)
+			if err != nil {
+				return nil, err
+			}
+			explanation.Signals = signals
 		}
 		explanations = append(explanations, explanation)
 	}
@@ -478,4 +510,22 @@ func nullableString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: value, Valid: true}
+}
+
+func marshalFailureSignals(signals FailureSignals) ([]byte, error) {
+	if signals.IsEmpty() {
+		return nil, nil
+	}
+	return json.Marshal(signals)
+}
+
+func unmarshalFailureSignals(data []byte) (FailureSignals, error) {
+	if len(data) == 0 {
+		return FailureSignals{}, nil
+	}
+	var signals FailureSignals
+	if err := json.Unmarshal(data, &signals); err != nil {
+		return FailureSignals{}, err
+	}
+	return signals, nil
 }

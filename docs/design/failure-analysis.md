@@ -48,6 +48,8 @@ Failure analysis operates on **post-execution data** only.
 - structured test reports (e.g., JUnit/TRX)
 - artifact metadata
 - execution timings
+- cache events (hits/misses, read-only)
+- attempt numbers and retry counts
 
 ### Forbidden Inputs
 - secrets
@@ -232,6 +234,7 @@ For every analyzed failure, Delta CI must be able to explain:
 - which signals were used
 - whether AI was involved
 - what uncertainty remains
+- which classification rule version applied
 
 Opaque analysis is considered a bug.
 

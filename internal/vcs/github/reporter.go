@@ -278,7 +278,14 @@ func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifact
 		}
 		if job.State == state.JobStateFailed || job.State == state.JobStateTimedOut {
 			if failure := failures[job.ID]; failure != nil {
-				fmt.Fprintf(&b, "  Failure: %s (%s/%s)\n", sanitize(failure.Summary), sanitize(string(failure.Category)), sanitize(string(failure.Confidence)))
+				rule := ""
+				if failure.RuleVersion != "" {
+					rule = " rule " + sanitize(failure.RuleVersion)
+				}
+				fmt.Fprintf(&b, "  Failure: %s (%s/%s%s)\n", sanitize(failure.Summary), sanitize(string(failure.Category)), sanitize(string(failure.Confidence)), rule)
+				if signalSummary := summarizeFailureSignals(failure.Signals); signalSummary != "" {
+					fmt.Fprintf(&b, "  Signals: %s\n", sanitize(signalSummary))
+				}
 			}
 		}
 		arts := artifacts[job.ID]
@@ -317,6 +324,26 @@ func sanitize(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.TrimSpace(value)
 	return value
+}
+
+func summarizeFailureSignals(signals state.FailureSignals) string {
+	parts := make([]string, 0, 4)
+	if signals.ExitCode != 0 {
+		parts = append(parts, fmt.Sprintf("exit=%d", signals.ExitCode))
+	}
+	if signals.AttemptNumber > 0 {
+		parts = append(parts, fmt.Sprintf("attempt=%d", signals.AttemptNumber))
+	}
+	if signals.DurationSeconds > 0 {
+		parts = append(parts, fmt.Sprintf("duration=%ds", signals.DurationSeconds))
+	}
+	if len(signals.CacheEvents) > 0 {
+		parts = append(parts, fmt.Sprintf("caches=%d", len(signals.CacheEvents)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
 }
 
 func isNotFound(err error) bool {

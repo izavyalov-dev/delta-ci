@@ -852,7 +852,7 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 	}
 
 	if target == state.JobStateFailed {
-		s.recordFailureExplanation(ctx, job, attempt, msg, artifactRefs)
+		s.recordFailureExplanation(ctx, job, attempt, msg, artifactRefs, msg.Caches)
 	}
 
 	if run.State == state.RunStateCancelRequested {
@@ -1002,19 +1002,27 @@ func (s *Service) CancelLease(ctx context.Context, msg protocol.CancelAck) error
 	return nil
 }
 
-func (s *Service) recordFailureExplanation(ctx context.Context, job state.Job, attempt state.JobAttempt, msg protocol.Complete, artifacts []state.ArtifactRef) {
+func (s *Service) recordFailureExplanation(ctx context.Context, job state.Job, attempt state.JobAttempt, msg protocol.Complete, artifacts []state.ArtifactRef, caches []protocol.CacheEvent) {
 	if s.analyzer == nil {
 		return
 	}
+	finishedAt := msg.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
 	explanation, err := s.analyzer.Analyze(ctx, FailureInput{
-		RunID:     job.RunID,
-		JobID:     job.ID,
-		JobName:   job.Name,
-		AttemptID: attempt.ID,
-		Status:    msg.Status,
-		ExitCode:  msg.ExitCode,
-		Summary:   msg.Summary,
-		Artifacts: artifacts,
+		RunID:         job.RunID,
+		JobID:         job.ID,
+		JobName:       job.Name,
+		AttemptID:     attempt.ID,
+		AttemptNumber: attempt.AttemptNumber,
+		Status:        msg.Status,
+		ExitCode:      msg.ExitCode,
+		Summary:       msg.Summary,
+		Artifacts:     artifacts,
+		CacheEvents:   caches,
+		StartedAt:     attempt.StartedAt,
+		FinishedAt:    &finishedAt,
 	})
 	if err != nil {
 		s.metrics.IncFailure("failure_analysis_failed")
