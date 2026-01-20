@@ -135,6 +135,7 @@ Returns:
 *	run status
 *	jobs and attempts
 *	timestamps
+*	plan explainability metadata (source, explain, skipped jobs)
 *	links to artifacts
 *	lease IDs are never returned; artifacts is an array (empty when none)
 *	artifact URIs are untrusted input and must be sanitized before use
@@ -161,6 +162,7 @@ Example response:
         "required": true,
         "state": "SUCCEEDED",
         "attempt_count": 1,
+        "reason": "go build triggered by code change",
         "created_at": "2026-01-12T08:00:00Z",
         "updated_at": "2026-01-12T08:05:00Z"
       },
@@ -197,7 +199,13 @@ Example response:
         }
       ]
     }
-  ]
+  ],
+  "plan": {
+    "recipe_source": "discovery",
+    "fingerprint": "sha256:...",
+    "explain": "diff-aware planner v1: discovered go.mod; changed paths: main.go; code change",
+    "skipped_jobs": []
+  }
 }
 ```
 

@@ -21,6 +21,7 @@ type Job struct {
 	Required     bool      `json:"required"`
 	State        JobState  `json:"state"`
 	AttemptCount int       `json:"attempt_count"`
+	Reason       string    `json:"reason,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -67,6 +68,12 @@ type Artifact struct {
 	Type         string    `json:"type"`
 	URI          string    `json:"uri"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// SkippedJob captures jobs intentionally not scheduled in a plan.
+type SkippedJob struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type FailureCategory string

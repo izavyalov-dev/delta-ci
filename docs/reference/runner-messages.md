@@ -91,7 +91,8 @@ Sent by the Orchestrator when a runner is granted a lease.
       {
         "type": "deps",
         "key": "nuget:{lock_hash}",
-        "paths": ["~/.nuget/packages"]
+        "paths": ["~/.nuget/packages"],
+        "read_only": false
       }
     ]
   }
@@ -183,6 +184,14 @@ Sent by the runner when execution finishes.
     {
       "type": "junit",
       "uri": "s3://delta-ci-artifacts/run_456/job_123/test.trx"
+    }
+  ],
+  "caches": [
+    {
+      "type": "deps",
+      "key": "nuget:{lock_hash}",
+      "hit": true,
+      "read_only": false
     }
   ],
   "summary": "All tests passed"

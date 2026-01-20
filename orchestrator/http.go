@@ -351,5 +351,8 @@ func sanitizeRunDetails(details RunDetails) RunDetails {
 			details.Jobs[i].FailureExplanations = []state.FailureExplanation{}
 		}
 	}
+	if details.Plan != nil && details.Plan.SkippedJobs == nil {
+		details.Plan.SkippedJobs = []state.SkippedJob{}
+	}
 	return details
 }

@@ -92,7 +92,7 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
 		GitHubWebhookSecret: *githubWebhookSecret,
@@ -155,7 +155,7 @@ func runDogfood(args []string) error {
 	if err != nil {
 		return err
 	}
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{})
 
@@ -323,7 +323,7 @@ func runWorker(args []string) error {
 		return err
 	}
 
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{})
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, nil)
 	logger := observability.NewLogger("worker")
 

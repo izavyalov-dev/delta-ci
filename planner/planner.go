@@ -21,17 +21,36 @@ type PlanRequest struct {
 
 // PlanResult is the outcome of the planning step.
 type PlanResult struct {
-	Jobs    []PlannedJob
-	Explain string
+	Jobs          []PlannedJob
+	Explain       string
+	SkippedJobs   []SkippedJob
+	Fingerprint   string
+	RecipeSource  string
+	RecipeID      string
+	RecipeVersion int
+}
+
+// SkippedJob describes a planned job that was intentionally not scheduled.
+type SkippedJob struct {
+	Name   string
+	Reason string
 }
 
 // PlannedJob describes a single job to schedule.
 type PlannedJob struct {
-	Name     string
-	Required bool
-	Spec     protocol.JobSpec
-	Reason   string
+	Name      string
+	Required  bool
+	Spec      protocol.JobSpec
+	Reason    string
+	DependsOn []string
 }
+
+const (
+	PlanSourceConfig    = "config"
+	PlanSourceRecipe    = "recipe"
+	PlanSourceDiscovery = "discovery"
+	PlanSourceFallback  = "fallback"
+)
 
 // StaticPlanner returns a fixed list of jobs. This keeps Phase 0 simple while
 // preserving the planner contract.

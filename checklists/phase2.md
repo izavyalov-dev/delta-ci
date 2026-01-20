@@ -34,11 +34,11 @@ Correctness, explainability, and safety remain mandatory.
 
 ## Milestone 2.1 — Impact Analysis v1
 
-- [ ] Define project ownership mapping from discovery inputs
-- [ ] Compute impacted projects from diff paths and file types
-- [ ] Propagate changes through known dependencies
-- [ ] Treat unknown ownership or dependency gaps as global impact
-- [ ] Emit per-job explanations tied to diff inputs
+- [x] Define project ownership mapping from discovery inputs
+- [x] Compute impacted projects from diff paths and file types
+- [x] Propagate changes through known dependencies
+- [x] Treat unknown ownership or dependency gaps as global impact
+- [x] Emit per-job explanations tied to diff inputs
 
 Success criteria:
 - same inputs always produce the same plan
@@ -49,25 +49,25 @@ Success criteria:
 
 ## Milestone 2.2 — Monorepo Support (Basic)
 
-- [ ] Detect workspace roots and project boundaries
-- [ ] Build per-project job graphs and aggregate into a run plan
-- [ ] Handle shared config changes (e.g., tooling, ci.ai.yaml) as global impact
-- [ ] Preserve allow-failure vs required classification per project
-- [ ] Ensure explainability names affected projects explicitly
+- [x] Detect workspace roots and project boundaries
+- [x] Build per-project job graphs and aggregate into a run plan
+- [x] Handle shared config changes (e.g., tooling, ci.ai.yaml) as global impact
+- [x] Preserve allow-failure vs required classification per project
+- [x] Ensure explainability names affected projects explicitly
 
 Success criteria:
 - scoped changes run only affected project jobs
-- global changes run all required jobs
+- global changes run all required jobs  
 
 ---
 
 ## Milestone 2.3 — Recipe Persistence and Reuse
 
-- [ ] Define recipe schema (jobs, order, tools, caches, artifacts)
-- [ ] Define repository fingerprint inputs and hashing
-- [ ] Persist recipes immutably with fingerprint and timestamps
-- [ ] Implement selection order: config > recipe match > discovery > fallback
-- [ ] Expose recipe usage and selection rationale in plan output
+- [x] Define recipe schema (jobs, order, tools, caches, artifacts)
+- [x] Define repository fingerprint inputs and hashing
+- [x] Persist recipes immutably with fingerprint and timestamps
+- [x] Implement selection order: config > recipe match > discovery > fallback
+- [x] Expose recipe usage and selection rationale in plan output
 
 Success criteria:
 - stable repos reuse recipes deterministically
@@ -77,11 +77,11 @@ Success criteria:
 
 ## Milestone 2.4 — Conservative Cache Integration
 
-- [ ] Define cache config per job in the control plane
-- [ ] Implement dependency and toolchain cache mounts in runners
-- [ ] Enforce fork PR read-only or no-cache policy
-- [ ] Ensure cache key inputs are deterministic and secret-free
-- [ ] Report cache hit/miss and keys in job metadata
+- [x] Define cache config per job in the control plane
+- [x] Implement dependency and toolchain cache mounts in runners
+- [x] Enforce fork PR read-only or no-cache policy
+- [x] Ensure cache key inputs are deterministic and secret-free
+- [x] Report cache hit/miss and keys in job metadata
 
 Success criteria:
 - cache failures never block job correctness
@@ -91,10 +91,10 @@ Success criteria:
 
 ## Milestone 2.5 — Explainability + Validation
 
-- [ ] Include "why this ran" reasons in API and GitHub summaries
-- [ ] Surface skipped jobs and explicit fallback reasons
-- [ ] Dogfood on the Delta CI repo with impact-based reductions
-- [ ] Add/refresh documentation for all new behaviors
+- [x] Include "why this ran" reasons in API and GitHub summaries
+- [x] Surface skipped jobs and explicit fallback reasons
+- [x] Dogfood on the Delta CI repo with impact-based reductions
+- [x] Add/refresh documentation for all new behaviors
 
 Success criteria:
 - reduced job counts for common changes without regressions

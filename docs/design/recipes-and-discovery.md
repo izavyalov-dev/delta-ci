@@ -149,6 +149,10 @@ It may include:
 - workspace definitions
 - dependency manifests
 
+For example, fingerprints may incorporate files like `go.mod`, `go.sum`,
+`go.work`, `package.json`, lockfiles, and task runner configs. Both file paths
+and contents are hashed to keep fingerprints deterministic.
+
 Fingerprint changes indicate that:
 - discovery may need to be re-run
 - existing recipes may no longer be valid

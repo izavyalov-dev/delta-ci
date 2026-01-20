@@ -91,6 +91,11 @@ Rules include:
 - configuration changes may affect everything
 - unknown impact defaults to conservative execution
 
+For Go monorepos, each `go.mod` is treated as a project boundary. When a
+`go.work` file is present, its `use` list defines the module roots. Impacted
+modules are expanded to dependents when the dependency graph is known, and job
+plans are emitted per impacted module with the workdir set to the module root.
+
 Impact analysis must err on the side of correctness.
 
 ---
@@ -119,6 +124,9 @@ The planner defines:
 - job ordering
 - parallelization
 - shared cache usage
+
+For Go module projects, `test` and `lint` jobs depend on the corresponding
+`build` job for that module to enforce per-project sequencing.
 
 The result is a directed acyclic graph (DAG) of jobs.
 
@@ -177,6 +185,7 @@ For every plan, the system must be able to explain:
 - why jobs were included or excluded
 - why a fallback was chosen
 - what assumptions were made
+- which jobs were skipped and why
 
 Explainability is not optional.
 
