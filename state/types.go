@@ -135,6 +135,19 @@ type FailureExplanation struct {
 	CreatedAt    time.Time         `json:"created_at"`
 }
 
+// FailureAIExplanation stores advisory AI explanations for a failed attempt.
+type FailureAIExplanation struct {
+	ID            int64     `json:"id"`
+	JobAttemptID  string    `json:"job_attempt_id"`
+	Provider      string    `json:"provider"`
+	Model         string    `json:"model,omitempty"`
+	PromptVersion string    `json:"prompt_version"`
+	Summary       string    `json:"summary"`
+	Details       string    `json:"details,omitempty"`
+	LatencyMS     int       `json:"latency_ms,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 // RunTrigger captures webhook metadata for idempotency and reporting.
 type RunTrigger struct {
 	RunID     string    `json:"run_id"`

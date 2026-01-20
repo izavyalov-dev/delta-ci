@@ -47,6 +47,9 @@ var explainability string
 //go:embed 0013_failure_explanations_signals.sql
 var failureExplanationSignals string
 
+//go:embed 0014_failure_ai_explanations.sql
+var failureAIExplanations string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
@@ -62,4 +65,5 @@ var All = []Migration{
 	{ID: "0011_cache_events", Script: cacheEvents},
 	{ID: "0012_explainability", Script: explainability},
 	{ID: "0013_failure_explanations_signals", Script: failureExplanationSignals},
+	{ID: "0014_failure_ai_explanations", Script: failureAIExplanations},
 }

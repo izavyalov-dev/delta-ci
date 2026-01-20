@@ -16,6 +16,7 @@ The focus is on **practical operability**, not vendor-specific tooling.
 ```
 operations/
 ├─ README.md              # This file — entry point and runbook index
+├─ ai-proxy.md             # Optional AI proxy for OpenAI
 ├─ deployment.md          # Deployment models and infrastructure assumptions
 ├─ scaling.md             # Scaling strategies and capacity planning
 ├─ observability.md       # Metrics, logs, traces, and alerting

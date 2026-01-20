@@ -246,6 +246,7 @@ Failure analysis events must be:
 - logged
 - correlated with run/job IDs
 - traceable to inputs and outputs
+- include AI advisory metadata when AI is used
 
 Audit logs must not contain sensitive data.
 

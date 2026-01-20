@@ -146,6 +146,7 @@ Recommended rollout approach:
 - enable conservative planning (run more, not less)
 - enable caching later
 - enable AI features last (after safety guardrails are proven)
+- use the optional AI proxy to isolate provider credentials
 
 ---
 
