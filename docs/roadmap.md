@@ -66,6 +66,7 @@ Features are added only when they reinforce core principles.
 ## Phase 2: Diff-Aware Value
 
 **Goal:** Demonstrate clear advantages over traditional CI.
+**Status:** Complete (2026-01-20)
 
 ### Scope
 - Impact-based job selection

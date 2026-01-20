@@ -34,11 +34,11 @@ Correctness, explainability, and safety remain mandatory.
 
 ## Milestone 2.1 — Impact Analysis v1
 
-- [ ] Define project ownership mapping from discovery inputs
-- [ ] Compute impacted projects from diff paths and file types
-- [ ] Propagate changes through known dependencies
-- [ ] Treat unknown ownership or dependency gaps as global impact
-- [ ] Emit per-job explanations tied to diff inputs
+- [x] Define project ownership mapping from discovery inputs
+- [x] Compute impacted projects from diff paths and file types
+- [x] Propagate changes through known dependencies
+- [x] Treat unknown ownership or dependency gaps as global impact
+- [x] Emit per-job explanations tied to diff inputs
 
 Success criteria:
 - same inputs always produce the same plan
@@ -91,10 +91,10 @@ Success criteria:
 
 ## Milestone 2.5 — Explainability + Validation
 
-- [ ] Include "why this ran" reasons in API and GitHub summaries
-- [ ] Surface skipped jobs and explicit fallback reasons
-- [ ] Dogfood on the Delta CI repo with impact-based reductions
-- [ ] Add/refresh documentation for all new behaviors
+- [x] Include "why this ran" reasons in API and GitHub summaries
+- [x] Surface skipped jobs and explicit fallback reasons
+- [x] Dogfood on the Delta CI repo with impact-based reductions
+- [x] Add/refresh documentation for all new behaviors
 
 Success criteria:
 - reduced job counts for common changes without regressions
