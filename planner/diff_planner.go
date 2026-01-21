@@ -706,7 +706,7 @@ func planForGo(impact impactSummary, explain string, projects []project, repoRoo
 			Reason: reasonForProject(reasons.build, projectName, root),
 		})
 
-		if !impact.DocsOnly {
+		if impact.DocsOnly {
 			testName := jobNameForProject("test", projectName, root)
 			jobs = append(jobs, PlannedJob{
 				Name:     testName,
