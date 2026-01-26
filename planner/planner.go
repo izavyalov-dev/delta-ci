@@ -96,7 +96,7 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 				Spec: protocol.JobSpec{
 					Name:    "lint",
 					Workdir: ".",
-					Steps:   []string{"go vet ./..."},
+					Steps:   []string{defaultLintCommand()},
 				},
 				Reason: "default lint job",
 			},
