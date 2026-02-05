@@ -48,11 +48,11 @@ Success criteria:
 
 ## Milestone 3.2 — AI Explanation Pipeline
 
-- [ ] Define provider-agnostic AI client interface and config
-- [ ] Build sanitized input bundles (redacted, truncated, bounded)
-- [ ] Add prompt templates with injection mitigation
-- [ ] Enforce timeouts, circuit breakers, and graceful fallback
-- [ ] Persist AI explanations as advisory artifacts with metadata
+- [x] Define provider-agnostic AI client interface and config
+- [x] Build sanitized input bundles (redacted, truncated, bounded)
+- [x] Add prompt templates with injection mitigation
+- [x] Enforce timeouts, circuit breakers, and graceful fallback
+- [x] Persist AI explanations as advisory artifacts with metadata
 
 Success criteria:
 - AI outage never blocks runs
@@ -78,11 +78,11 @@ Success criteria:
 
 ## Milestone 3.4 — Human-in-the-Loop UX + Audit
 
-- [ ] Surface AI explanations and confidence in APIs
-- [ ] Add GitHub summaries with advisory labels and evidence links
-- [ ] Provide policy toggles (enable/disable AI usage)
-- [ ] Log all AI interactions with run/job correlation IDs
-- [ ] Document new behaviors and update security notes
+- [x] Surface AI explanations and confidence in APIs
+- [x] Add GitHub summaries with advisory labels and evidence links
+- [x] Provide policy toggles (enable/disable AI usage)
+- [x] Log all AI interactions with run/job correlation IDs
+- [x] Document new behaviors and update security notes
 
 Success criteria:
 - users can distinguish AI vs rule-based output

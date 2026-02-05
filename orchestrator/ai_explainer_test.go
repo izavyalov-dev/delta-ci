@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/state"
 )
 
@@ -110,5 +111,31 @@ func TestBuildFailurePromptSanitizes(t *testing.T) {
 	}
 	if strings.Contains(prompt, "\n\n\n") {
 		t.Fatalf("unexpected excessive newlines in prompt")
+	}
+}
+
+func TestBuildFailurePromptRedactsSecrets(t *testing.T) {
+	prompt, err := buildFailurePrompt(FailureInput{
+		JobName:   "test",
+		Summary:   "OPENAI_API_KEY=sk-1234567890abcdefghijkl",
+		AttemptID: "attempt",
+		CacheEvents: []protocol.CacheEvent{
+			{
+				Type: "deps",
+				Key:  "github_token=topsecret",
+			},
+		},
+	}, AIConfig{})
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+	if strings.Contains(prompt, "topsecret") {
+		t.Fatalf("expected key value redaction")
+	}
+	if strings.Contains(prompt, "sk-1234567890abcdefghijkl") {
+		t.Fatalf("expected token redaction")
+	}
+	if !strings.Contains(prompt, "[REDACTED]") {
+		t.Fatalf("expected redaction marker")
 	}
 }

@@ -27,10 +27,11 @@ type RunDetails struct {
 
 // JobDetail presents a job alongside its attempts.
 type JobDetail struct {
-	Job                 state.Job                  `json:"job"`
-	Attempts            []state.JobAttempt         `json:"attempts"`
-	Artifacts           []state.Artifact           `json:"artifacts"`
-	FailureExplanations []state.FailureExplanation `json:"failure_explanations"`
+	Job                   state.Job                    `json:"job"`
+	Attempts              []state.JobAttempt           `json:"attempts"`
+	Artifacts             []state.Artifact             `json:"artifacts"`
+	FailureExplanations   []state.FailureExplanation   `json:"failure_explanations"`
+	FailureAIExplanations []state.FailureAIExplanation `json:"failure_ai_explanations"`
 }
 
 // RunPlanDetail provides plan explainability metadata for APIs.

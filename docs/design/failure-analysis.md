@@ -236,6 +236,10 @@ For every analyzed failure, Delta CI must be able to explain:
 - what uncertainty remains
 - which classification rule version applied
 
+User-facing outputs include both rule-based and AI advisory sections:
+- run APIs expose `failure_explanations` and `failure_ai_explanations` per job
+- GitHub summaries label AI text as advisory and include evidence links (for example log artifact URIs)
+
 Opaque analysis is considered a bug.
 
 ---

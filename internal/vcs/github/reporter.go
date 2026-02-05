@@ -80,6 +80,7 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 	}
 	jobArtifacts := make(map[string][]state.Artifact, len(jobs))
 	jobFailures := make(map[string]*state.FailureExplanation, len(jobs))
+	jobAI := make(map[string]*state.FailureAIExplanation, len(jobs))
 	for _, job := range jobs {
 		artifacts, err := r.store.ListArtifactsByJob(ctx, job.ID)
 		if err != nil {
@@ -94,9 +95,17 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 		if len(explanations) > 0 {
 			jobFailures[job.ID] = &explanations[0]
 		}
+
+		aiExplanations, err := r.store.ListFailureAIExplanationsByJob(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		if len(aiExplanations) > 0 {
+			jobAI[job.ID] = &aiExplanations[0]
+		}
 	}
 
-	title, summary := buildSummary(run, plan, jobs, jobArtifacts, jobFailures)
+	title, summary := buildSummary(run, plan, jobs, jobArtifacts, jobFailures, jobAI)
 	checkReq := buildCheckRun(r.checkName, run, title, summary)
 
 	checkRunID := report.CheckRunID
@@ -241,7 +250,7 @@ func isReportableTerminal(stateValue state.RunState) bool {
 	}
 }
 
-func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation) (string, string) {
+func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation, ai map[string]*state.FailureAIExplanation) (string, string) {
 	title := fmt.Sprintf("Delta CI: %s", run.State)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run `%s`\n\n", run.ID)
@@ -286,6 +295,14 @@ func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifact
 				if signalSummary := summarizeFailureSignals(failure.Signals); signalSummary != "" {
 					fmt.Fprintf(&b, "  Signals: %s\n", sanitize(signalSummary))
 				}
+			}
+			if aiExplanation := ai[job.ID]; aiExplanation != nil {
+				if aiSummary := summarizeAI(*aiExplanation); aiSummary != "" {
+					fmt.Fprintf(&b, "  AI advisory: %s\n", sanitize(aiSummary))
+				}
+			}
+			if evidence := summarizeEvidence(artifacts[job.ID]); evidence != "" {
+				fmt.Fprintf(&b, "  Evidence: %s\n", sanitize(evidence))
 			}
 		}
 		arts := artifacts[job.ID]
@@ -344,6 +361,47 @@ func summarizeFailureSignals(signals state.FailureSignals) string {
 		return ""
 	}
 	return strings.Join(parts, ", ")
+}
+
+func summarizeAI(explanation state.FailureAIExplanation) string {
+	summary := sanitize(explanation.Summary)
+	if summary == "" {
+		return ""
+	}
+	meta := make([]string, 0, 3)
+	if explanation.Provider != "" {
+		meta = append(meta, explanation.Provider)
+	}
+	if explanation.Model != "" {
+		meta = append(meta, explanation.Model)
+	}
+	if explanation.PromptVersion != "" {
+		meta = append(meta, explanation.PromptVersion)
+	}
+	if len(meta) == 0 {
+		return summary
+	}
+	return fmt.Sprintf("%s [%s]", summary, strings.Join(meta, "/"))
+}
+
+func summarizeEvidence(artifacts []state.Artifact) string {
+	if len(artifacts) == 0 {
+		return ""
+	}
+	uris := make([]string, 0, 2)
+	for _, artifact := range artifacts {
+		if !strings.EqualFold(artifact.Type, "log") && !strings.EqualFold(artifact.Type, "junit") && !strings.EqualFold(artifact.Type, "report") {
+			continue
+		}
+		uris = append(uris, sanitize(artifact.URI))
+		if len(uris) == 2 {
+			break
+		}
+	}
+	if len(uris) == 0 {
+		return ""
+	}
+	return strings.Join(uris, "; ")
 }
 
 func isNotFound(err error) bool {

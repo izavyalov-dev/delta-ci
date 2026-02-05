@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +27,9 @@ const (
 var (
 	ErrAIUnavailable = errors.New("ai provider unavailable")
 	ErrAICircuitOpen = errors.New("ai circuit open")
+
+	aiSensitiveValuePattern = regexp.MustCompile(`(?i)\b([a-z0-9_]*(?:token|secret|password|passwd|api[_-]?key)[a-z0-9_]*)\s*[:=]\s*([^\s,;]+)`)
+	aiTokenPattern          = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b`)
 )
 
 // AIClient defines a provider-agnostic interface for failure explanations.
@@ -88,6 +93,7 @@ type AIExplainer struct {
 	client   AIClient
 	recorder FailureAIRecorder
 	config   AIConfig
+	logger   *slog.Logger
 	now      func() time.Time
 
 	mu        sync.Mutex
@@ -106,6 +112,7 @@ func NewAIExplainer(client AIClient, recorder FailureAIRecorder, config AIConfig
 		client:   client,
 		recorder: recorder,
 		config:   config.withDefaults(),
+		logger:   slog.Default(),
 		now:      time.Now,
 	}
 }
@@ -115,13 +122,29 @@ func (a *AIExplainer) Explain(ctx context.Context, input FailureInput) (string, 
 	if a == nil || a.client == nil || !a.config.Enabled {
 		return "", ErrAIUnavailable
 	}
+	logger := a.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	logFields := []any{
+		"run_id", input.RunID,
+		"job_id", input.JobID,
+		"attempt_id", input.AttemptID,
+		"provider", a.config.Provider,
+		"model", a.config.Model,
+		"prompt_version", a.config.PromptVersion,
+	}
+
 	if a.circuitOpen() {
+		logger.Warn("ai explanation skipped: circuit open", append([]any{"event", "failure_ai_circuit_open"}, logFields...)...)
 		return "", ErrAICircuitOpen
 	}
 
 	prompt, err := buildFailurePrompt(input, a.config)
 	if err != nil {
 		a.recordFailure()
+		logger.Warn("ai explanation prompt build failed", append([]any{"event", "failure_ai_prompt_failed", "error", err}, logFields...)...)
 		return "", err
 	}
 
@@ -138,6 +161,7 @@ func (a *AIExplainer) Explain(ctx context.Context, input FailureInput) (string, 
 	latency := a.now().Sub(start)
 	if err != nil {
 		a.recordFailure()
+		logger.Warn("ai explanation request failed", append([]any{"event", "failure_ai_request_failed", "error", err}, logFields...)...)
 		return "", err
 	}
 	a.resetFailures()
@@ -146,6 +170,7 @@ func (a *AIExplainer) Explain(ctx context.Context, input FailureInput) (string, 
 	details := sanitizeText(resp.Details, a.config.MaxOutputLen)
 	if summary == "" {
 		a.recordFailure()
+		logger.Warn("ai explanation missing summary", append([]any{"event", "failure_ai_empty_summary"}, logFields...)...)
 		return "", ErrAIUnavailable
 	}
 
@@ -159,7 +184,7 @@ func (a *AIExplainer) Explain(ctx context.Context, input FailureInput) (string, 
 	}
 
 	if a.recorder != nil {
-		_ = a.recorder.RecordFailureAIExplanation(ctx, state.FailureAIExplanation{
+		err := a.recorder.RecordFailureAIExplanation(ctx, state.FailureAIExplanation{
 			JobAttemptID:  input.AttemptID,
 			Provider:      provider,
 			Model:         model,
@@ -168,7 +193,12 @@ func (a *AIExplainer) Explain(ctx context.Context, input FailureInput) (string, 
 			Details:       details,
 			LatencyMS:     int(latency.Milliseconds()),
 		})
+		if err != nil {
+			logger.Warn("ai explanation persistence failed", append([]any{"event", "failure_ai_persist_failed", "error", err}, logFields...)...)
+		}
 	}
+
+	logger.Info("ai explanation generated", append([]any{"event", "failure_ai_generated", "latency_ms", int(latency.Milliseconds())}, logFields...)...)
 
 	if details == "" {
 		return summary, nil
@@ -220,9 +250,9 @@ type failurePromptPayload struct {
 func buildFailurePrompt(input FailureInput, config AIConfig) (string, error) {
 	config = config.withDefaults()
 	payload := failurePromptPayload{
-		JobName:       sanitizeText(input.JobName, defaultMaxFailureSummaryLen),
+		JobName:       sanitizeAIInputText(input.JobName, defaultMaxFailureSummaryLen),
 		ExitCode:      input.ExitCode,
-		Summary:       sanitizeText(input.Summary, defaultMaxFailureDetailsLen),
+		Summary:       sanitizeAIInputText(input.Summary, defaultMaxFailureDetailsLen),
 		AttemptNumber: input.AttemptNumber,
 	}
 	if input.StartedAt != nil && input.FinishedAt != nil && !input.FinishedAt.Before(*input.StartedAt) {
@@ -234,7 +264,11 @@ func buildFailurePrompt(input FailureInput, config AIConfig) (string, error) {
 		if artifact.Type == "" {
 			continue
 		}
-		artifactTypes[artifact.Type] = struct{}{}
+		artifactType := sanitizeAIInputText(artifact.Type, 32)
+		if artifactType == "" {
+			continue
+		}
+		artifactTypes[artifactType] = struct{}{}
 		if strings.EqualFold(artifact.Type, "log") {
 			payload.HasLog = true
 		}
@@ -256,8 +290,8 @@ func buildFailurePrompt(input FailureInput, config AIConfig) (string, error) {
 				continue
 			}
 			cacheSignals = append(cacheSignals, state.CacheEventSignal{
-				Type:     sanitizeText(event.Type, 32),
-				Key:      sanitizeText(event.Key, 64),
+				Type:     sanitizeAIInputText(event.Type, 32),
+				Key:      sanitizeAIInputText(event.Key, 64),
 				Hit:      event.Hit,
 				ReadOnly: event.ReadOnly,
 			})
@@ -293,4 +327,22 @@ JSON:
 %s
 `, string(data))
 	return prompt, nil
+}
+
+func sanitizeAIInputText(value string, maxLen int) string {
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.TrimSpace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	value = redactSensitiveText(value)
+	return truncateText(value, maxLen)
+}
+
+func redactSensitiveText(value string) string {
+	if value == "" {
+		return value
+	}
+	value = aiSensitiveValuePattern.ReplaceAllString(value, "$1=[REDACTED]")
+	value = aiTokenPattern.ReplaceAllString(value, "[REDACTED]")
+	return value
 }

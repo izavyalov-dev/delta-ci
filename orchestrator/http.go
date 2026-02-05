@@ -350,6 +350,9 @@ func sanitizeRunDetails(details RunDetails) RunDetails {
 		if details.Jobs[i].FailureExplanations == nil {
 			details.Jobs[i].FailureExplanations = []state.FailureExplanation{}
 		}
+		if details.Jobs[i].FailureAIExplanations == nil {
+			details.Jobs[i].FailureAIExplanations = []state.FailureAIExplanation{}
+		}
 	}
 	if details.Plan != nil && details.Plan.SkippedJobs == nil {
 		details.Plan.SkippedJobs = []state.SkippedJob{}

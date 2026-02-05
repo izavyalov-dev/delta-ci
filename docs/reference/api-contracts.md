@@ -141,6 +141,7 @@ Returns:
 *	artifact URIs are untrusted input and must be sanitized before use
 *	failure explanations are advisory and may be empty
 *	failure explanations include rule versions and classification signals when available
+*	AI explanations are advisory and include provider/model/prompt metadata when available
 
 Example response:
 ```json
@@ -213,6 +214,19 @@ Example response:
           },
           "details": "Observed: exit status 1 | Log: s3://delta-ci-artifacts/runs/run_456/jobs/job_123/log.txt",
           "created_at": "2026-01-12T08:05:01Z"
+        }
+      ],
+      "failure_ai_explanations": [
+        {
+          "id": 1,
+          "job_attempt_id": "attempt_abc",
+          "provider": "openai",
+          "model": "gpt-4o-mini",
+          "prompt_version": "failure-explain-v1",
+          "summary": "Likely assertion mismatch in unit tests.",
+          "details": "Check changed fixtures and expected values.",
+          "latency_ms": 812,
+          "created_at": "2026-01-12T08:05:02Z"
         }
       ]
     }

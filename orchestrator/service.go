@@ -359,10 +359,11 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 	jobDetails := make([]JobDetail, 0, len(jobRecords))
 	for _, record := range jobRecords {
 		jobDetails = append(jobDetails, JobDetail{
-			Job:                 record.job,
-			Attempts:            []state.JobAttempt{record.attempt},
-			Artifacts:           nil,
-			FailureExplanations: nil,
+			Job:                   record.job,
+			Attempts:              []state.JobAttempt{record.attempt},
+			Artifacts:             nil,
+			FailureExplanations:   nil,
+			FailureAIExplanations: nil,
 		})
 	}
 
@@ -494,12 +495,17 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 		if err != nil {
 			return RunDetails{}, err
 		}
+		failureAIExplanations, err := s.store.ListFailureAIExplanationsByJob(ctx, job.ID)
+		if err != nil {
+			return RunDetails{}, err
+		}
 
 		jobDetails = append(jobDetails, JobDetail{
-			Job:                 job,
-			Attempts:            attempts,
-			Artifacts:           artifacts,
-			FailureExplanations: failureExplanations,
+			Job:                   job,
+			Attempts:              attempts,
+			Artifacts:             artifacts,
+			FailureExplanations:   failureExplanations,
+			FailureAIExplanations: failureAIExplanations,
 		})
 	}
 

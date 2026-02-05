@@ -58,6 +58,10 @@ type StaticPlanner struct {
 	Jobs []PlannedJob
 }
 
+func defaultLintCommand() string {
+	return "go vet ./..."
+}
+
 func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error) {
 	if len(p.Jobs) > 0 {
 		return PlanResult{
