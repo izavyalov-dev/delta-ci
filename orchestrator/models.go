@@ -32,6 +32,7 @@ type JobDetail struct {
 	Artifacts             []state.Artifact             `json:"artifacts"`
 	FailureExplanations   []state.FailureExplanation   `json:"failure_explanations"`
 	FailureAIExplanations []state.FailureAIExplanation `json:"failure_ai_explanations"`
+	FixSuggestions        []state.FixSuggestion        `json:"fix_suggestions"`
 }
 
 // RunPlanDetail provides plan explainability metadata for APIs.

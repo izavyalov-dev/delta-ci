@@ -223,6 +223,7 @@ When a fix is proposed:
 6. Await user decision
 
 A failed validation must not modify repository state.
+Validation outcomes are stored as advisory metadata (`VALIDATION_*` status + summary).
 
 ---
 

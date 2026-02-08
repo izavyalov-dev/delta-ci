@@ -148,6 +148,44 @@ type FailureAIExplanation struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type FixSuggestionPatchFormat string
+
+const (
+	FixSuggestionPatchFormatUnifiedDiff FixSuggestionPatchFormat = "UNIFIED_DIFF"
+)
+
+type FixSuggestionValidationStatus string
+
+const (
+	FixSuggestionValidationPending   FixSuggestionValidationStatus = "PENDING"
+	FixSuggestionValidationQueued    FixSuggestionValidationStatus = "VALIDATION_QUEUED"
+	FixSuggestionValidationRunning   FixSuggestionValidationStatus = "VALIDATION_RUNNING"
+	FixSuggestionValidationSucceeded FixSuggestionValidationStatus = "VALIDATION_SUCCEEDED"
+	FixSuggestionValidationFailed    FixSuggestionValidationStatus = "VALIDATION_FAILED"
+	FixSuggestionValidationCanceled  FixSuggestionValidationStatus = "VALIDATION_CANCELED"
+)
+
+// FixSuggestion stores an advisory patch candidate and validation outcome.
+type FixSuggestion struct {
+	ID                int64                         `json:"id"`
+	JobAttemptID      string                        `json:"job_attempt_id"`
+	Provider          string                        `json:"provider"`
+	Model             string                        `json:"model,omitempty"`
+	PromptVersion     string                        `json:"prompt_version"`
+	Title             string                        `json:"title"`
+	Summary           string                        `json:"summary"`
+	PatchFormat       FixSuggestionPatchFormat      `json:"patch_format"`
+	PatchUnifiedDiff  string                        `json:"patch_unified_diff"`
+	PatchSHA256       string                        `json:"patch_sha256"`
+	ValidationRunID   *string                       `json:"validation_run_id,omitempty"`
+	ValidationJobID   *string                       `json:"validation_job_id,omitempty"`
+	ValidationStatus  FixSuggestionValidationStatus `json:"validation_status"`
+	ValidationSummary string                        `json:"validation_summary,omitempty"`
+	RequiresApproval  bool                          `json:"requires_approval"`
+	CreatedAt         time.Time                     `json:"created_at"`
+	UpdatedAt         time.Time                     `json:"updated_at"`
+}
+
 // RunTrigger captures webhook metadata for idempotency and reporting.
 type RunTrigger struct {
 	RunID     string    `json:"run_id"`

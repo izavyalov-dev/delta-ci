@@ -63,11 +63,11 @@ Success criteria:
 
 ## Milestone 3.3 — Fix Suggestions + Validation Jobs
 
-- [ ] Define patch format (unified diff) and storage for suggestions
-- [ ] Create validation job type that applies patch in a sandbox
-- [ ] Ensure validation runs are isolated and non-privileged
-- [ ] Report validation results without modifying repo state
-- [ ] Require explicit user approval to apply any fix
+- [x] Define patch format (unified diff) and storage for suggestions
+- [x] Create validation job type that applies patch in a sandbox
+- [x] Ensure validation runs are isolated and non-privileged
+- [x] Report validation results without modifying repo state
+- [x] Require explicit user approval to apply any fix
 
 Success criteria:
 - no auto-apply of AI fixes
