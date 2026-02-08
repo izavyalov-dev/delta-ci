@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +59,114 @@ func usage() {
 	fmt.Println("Usage: orchestrator <serve|dogfood|worker> [flags]")
 }
 
+type aiSettings struct {
+	Enabled        bool
+	Provider       string
+	Model          string
+	Endpoint       string
+	Token          string
+	PromptVersion  string
+	Timeout        time.Duration
+	MaxOutputLen   int
+	MaxCacheEvents int
+	MaxFailures    int
+	Cooldown       time.Duration
+}
+
+func addAIFlags(flags *flag.FlagSet) *aiSettings {
+	settings := &aiSettings{
+		Enabled:        envBool("DELTA_AI_ENABLED"),
+		Provider:       os.Getenv("DELTA_AI_PROVIDER"),
+		Model:          os.Getenv("DELTA_AI_MODEL"),
+		Endpoint:       os.Getenv("DELTA_AI_ENDPOINT"),
+		Token:          os.Getenv("DELTA_AI_TOKEN"),
+		PromptVersion:  os.Getenv("DELTA_AI_PROMPT_VERSION"),
+		Timeout:        envDuration("DELTA_AI_TIMEOUT"),
+		MaxOutputLen:   envInt("DELTA_AI_MAX_OUTPUT_LEN"),
+		MaxCacheEvents: envInt("DELTA_AI_MAX_CACHE_EVENTS"),
+		MaxFailures:    envInt("DELTA_AI_CIRCUIT_FAILURES"),
+		Cooldown:       envDuration("DELTA_AI_CIRCUIT_COOLDOWN"),
+	}
+
+	flags.BoolVar(&settings.Enabled, "ai-enabled", settings.Enabled, "Enable AI failure explanations")
+	flags.StringVar(&settings.Provider, "ai-provider", settings.Provider, "AI provider name")
+	flags.StringVar(&settings.Model, "ai-model", settings.Model, "AI model identifier")
+	flags.StringVar(&settings.Endpoint, "ai-endpoint", settings.Endpoint, "AI HTTP endpoint for explanations")
+	flags.StringVar(&settings.Token, "ai-token", settings.Token, "AI API token for Authorization header")
+	flags.StringVar(&settings.PromptVersion, "ai-prompt-version", settings.PromptVersion, "AI prompt version")
+	flags.DurationVar(&settings.Timeout, "ai-timeout", settings.Timeout, "AI request timeout (e.g., 3s)")
+	flags.IntVar(&settings.MaxOutputLen, "ai-max-output-len", settings.MaxOutputLen, "Max AI output length")
+	flags.IntVar(&settings.MaxCacheEvents, "ai-max-cache-events", settings.MaxCacheEvents, "Max cache events included in AI prompt")
+	flags.IntVar(&settings.MaxFailures, "ai-circuit-failures", settings.MaxFailures, "AI circuit breaker failure threshold")
+	flags.DurationVar(&settings.Cooldown, "ai-circuit-cooldown", settings.Cooldown, "AI circuit breaker cooldown")
+	return settings
+}
+
+func buildFailureAnalyzer(store *state.Store, settings *aiSettings) (orchestrator.FailureAnalyzer, error) {
+	analyzer := orchestrator.NewRuleBasedFailureAnalyzer()
+	if settings == nil || !settings.Enabled {
+		return analyzer, nil
+	}
+	if strings.TrimSpace(settings.Endpoint) == "" {
+		return nil, errors.New("ai-enabled requires ai-endpoint")
+	}
+
+	client := &orchestrator.HTTPAIClient{
+		Endpoint: settings.Endpoint,
+		Token:    settings.Token,
+	}
+	explainer := orchestrator.NewAIExplainer(client, store, orchestrator.AIConfig{
+		Enabled:        settings.Enabled,
+		Provider:       settings.Provider,
+		Model:          settings.Model,
+		PromptVersion:  settings.PromptVersion,
+		Timeout:        settings.Timeout,
+		MaxOutputLen:   settings.MaxOutputLen,
+		MaxCacheEvents: settings.MaxCacheEvents,
+		MaxFailures:    settings.MaxFailures,
+		Cooldown:       settings.Cooldown,
+	})
+	analyzer.Advisor = explainer
+	analyzer.EnableAI = true
+	return analyzer, nil
+}
+
+func envBool(name string) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return false
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false
+	}
+	return value
+}
+
+func envInt(name string) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func envDuration(name string) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
 func runServe(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ExitOnError)
 	databaseURL := flags.String("database-url", os.Getenv("DATABASE_URL"), "Postgres DSN")
@@ -70,6 +179,7 @@ func runServe(args []string) error {
 	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
+	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
 	if *databaseURL == "" {
@@ -92,8 +202,12 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	analyzer, err := buildFailureAnalyzer(store, aiSettings)
+	if err != nil {
+		return err
+	}
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
+	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
 		GitHubWebhookSecret: *githubWebhookSecret,
 	})
@@ -133,6 +247,7 @@ func runDogfood(args []string) error {
 	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
+	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
 	if *databaseURL == "" {
@@ -155,8 +270,12 @@ func runDogfood(args []string) error {
 	if err != nil {
 		return err
 	}
+	analyzer, err := buildFailureAnalyzer(store, aiSettings)
+	if err != nil {
+		return err
+	}
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, nil)
+	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{})
 
 	server, baseURL, err := startServer(handler, *listen)
@@ -299,6 +418,7 @@ func runWorker(args []string) error {
 	visibilityTimeout := flags.Duration("visibility-timeout", 30*time.Second, "Queue visibility timeout")
 	pollInterval := flags.Duration("poll-interval", 2*time.Second, "Delay between empty queue polls")
 	continueOnRunnerError := flags.Bool("continue-on-runner-error", true, "Keep worker running after a runner error")
+	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
 	if *databaseURL == "" {
@@ -324,7 +444,11 @@ func runWorker(args []string) error {
 	}
 
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, nil)
+	analyzer, err := buildFailureAnalyzer(store, aiSettings)
+	if err != nil {
+		return err
+	}
+	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, analyzer)
 	logger := observability.NewLogger("worker")
 
 	if err := os.MkdirAll(*logDir, 0o755); err != nil {

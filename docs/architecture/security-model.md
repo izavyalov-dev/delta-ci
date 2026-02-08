@@ -189,6 +189,9 @@ AI must NOT:
 - bypass policy checks
 
 Human approval is mandatory for all mutations.
+AI outputs must be clearly labeled as advisory in APIs and status summaries.
+AI output metadata (provider/model/prompt version) must be retained for auditability.
+Patch suggestions may be validated in sandboxed runs but never auto-applied.
 
 ---
 

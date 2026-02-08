@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
@@ -285,6 +286,87 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 		}
 	})
 
+	mux.HandleFunc("/api/v1/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		jobID, action, ok := parseJobPath(r.URL.Path)
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if action != "fix-suggestions" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		var req struct {
+			Provider         string `json:"provider"`
+			Model            string `json:"model"`
+			PromptVersion    string `json:"prompt_version"`
+			Title            string `json:"title"`
+			Summary          string `json:"summary"`
+			PatchUnifiedDiff string `json:"patch_unified_diff"`
+			ValidateNow      bool   `json:"validate_now"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+
+		suggestion, err := service.CreateFixSuggestion(r.Context(), CreateFixSuggestionRequest{
+			JobID:            jobID,
+			Provider:         req.Provider,
+			Model:            req.Model,
+			PromptVersion:    req.PromptVersion,
+			Title:            req.Title,
+			Summary:          req.Summary,
+			PatchUnifiedDiff: req.PatchUnifiedDiff,
+			ValidateNow:      req.ValidateNow,
+		})
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, suggestion)
+	})
+
+	mux.HandleFunc("/api/v1/fix-suggestions/", func(w http.ResponseWriter, r *http.Request) {
+		suggestionID, action, ok := parseFixSuggestionPath(r.URL.Path)
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if action != "validate" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		suggestion, err := service.QueueFixSuggestionValidation(r.Context(), suggestionID)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			if state.IsTransitionError(err) {
+				writeError(w, http.StatusConflict, err)
+				return
+			}
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, suggestion)
+	})
+
 	return mux
 }
 
@@ -323,6 +405,36 @@ func parseRunPath(path string) (string, string, bool) {
 	}
 }
 
+func parseJobPath(path string) (string, string, bool) {
+	path = strings.TrimPrefix(path, "/api/v1/jobs/")
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	if parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func parseFixSuggestionPath(path string) (int64, string, bool) {
+	path = strings.TrimPrefix(path, "/api/v1/fix-suggestions/")
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		return 0, "", false
+	}
+	if parts[0] == "" || parts[1] == "" {
+		return 0, "", false
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, "", false
+	}
+	return id, parts[1], true
+}
+
 func decodeJSON(r *http.Request, target any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -349,6 +461,12 @@ func sanitizeRunDetails(details RunDetails) RunDetails {
 		}
 		if details.Jobs[i].FailureExplanations == nil {
 			details.Jobs[i].FailureExplanations = []state.FailureExplanation{}
+		}
+		if details.Jobs[i].FailureAIExplanations == nil {
+			details.Jobs[i].FailureAIExplanations = []state.FailureAIExplanation{}
+		}
+		if details.Jobs[i].FixSuggestions == nil {
+			details.Jobs[i].FixSuggestions = []state.FixSuggestion{}
 		}
 	}
 	if details.Plan != nil && details.Plan.SkippedJobs == nil {

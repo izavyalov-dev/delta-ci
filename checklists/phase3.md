@@ -33,11 +33,11 @@ Correctness, explainability, and safety remain mandatory.
 
 ## Milestone 3.1 — Structured Failure Classification v2
 
-- [ ] Expand rule-based classification signals (exit codes, timings, retries)
-- [ ] Include cache events and artifact metadata as signals
-- [ ] Persist classification signals and confidence per attempt
-- [ ] Expose classification in APIs and GitHub summaries
-- [ ] Add tests for deterministic classification paths
+- [x] Expand rule-based classification signals (exit codes, timings, retries)
+- [x] Include cache events and artifact metadata as signals
+- [x] Persist classification signals and confidence per attempt
+- [x] Expose classification in APIs and GitHub summaries
+- [x] Add tests for deterministic classification paths
 
 Success criteria:
 - identical inputs always yield identical classifications
@@ -48,11 +48,11 @@ Success criteria:
 
 ## Milestone 3.2 — AI Explanation Pipeline
 
-- [ ] Define provider-agnostic AI client interface and config
-- [ ] Build sanitized input bundles (redacted, truncated, bounded)
-- [ ] Add prompt templates with injection mitigation
-- [ ] Enforce timeouts, circuit breakers, and graceful fallback
-- [ ] Persist AI explanations as advisory artifacts with metadata
+- [x] Define provider-agnostic AI client interface and config
+- [x] Build sanitized input bundles (redacted, truncated, bounded)
+- [x] Add prompt templates with injection mitigation
+- [x] Enforce timeouts, circuit breakers, and graceful fallback
+- [x] Persist AI explanations as advisory artifacts with metadata
 
 Success criteria:
 - AI outage never blocks runs
@@ -63,11 +63,11 @@ Success criteria:
 
 ## Milestone 3.3 — Fix Suggestions + Validation Jobs
 
-- [ ] Define patch format (unified diff) and storage for suggestions
-- [ ] Create validation job type that applies patch in a sandbox
-- [ ] Ensure validation runs are isolated and non-privileged
-- [ ] Report validation results without modifying repo state
-- [ ] Require explicit user approval to apply any fix
+- [x] Define patch format (unified diff) and storage for suggestions
+- [x] Create validation job type that applies patch in a sandbox
+- [x] Ensure validation runs are isolated and non-privileged
+- [x] Report validation results without modifying repo state
+- [x] Require explicit user approval to apply any fix
 
 Success criteria:
 - no auto-apply of AI fixes
@@ -78,11 +78,11 @@ Success criteria:
 
 ## Milestone 3.4 — Human-in-the-Loop UX + Audit
 
-- [ ] Surface AI explanations and confidence in APIs
-- [ ] Add GitHub summaries with advisory labels and evidence links
-- [ ] Provide policy toggles (enable/disable AI usage)
-- [ ] Log all AI interactions with run/job correlation IDs
-- [ ] Document new behaviors and update security notes
+- [x] Surface AI explanations and confidence in APIs
+- [x] Add GitHub summaries with advisory labels and evidence links
+- [x] Provide policy toggles (enable/disable AI usage)
+- [x] Log all AI interactions with run/job correlation IDs
+- [x] Document new behaviors and update security notes
 
 Success criteria:
 - users can distinguish AI vs rule-based output

@@ -230,12 +230,39 @@ No provider-specific behavior may leak into core logic.
 
 ---
 
+## Runtime Configuration (Orchestrator)
+
+AI explanations are configured at runtime via flags or environment variables.
+All fields are optional unless `ai-enabled` is set.
+
+Flags (env var):
+- `-ai-enabled` (`DELTA_AI_ENABLED`)
+- `-ai-endpoint` (`DELTA_AI_ENDPOINT`) — required when enabled
+- `-ai-token` (`DELTA_AI_TOKEN`) — optional bearer token
+- `-ai-provider` (`DELTA_AI_PROVIDER`)
+- `-ai-model` (`DELTA_AI_MODEL`)
+- `-ai-prompt-version` (`DELTA_AI_PROMPT_VERSION`)
+- `-ai-timeout` (`DELTA_AI_TIMEOUT`)
+- `-ai-max-output-len` (`DELTA_AI_MAX_OUTPUT_LEN`)
+- `-ai-max-cache-events` (`DELTA_AI_MAX_CACHE_EVENTS`)
+- `-ai-circuit-failures` (`DELTA_AI_CIRCUIT_FAILURES`)
+- `-ai-circuit-cooldown` (`DELTA_AI_CIRCUIT_COOLDOWN`)
+
+If AI is disabled or unavailable, the system falls back to deterministic
+rule-based explanations only.
+
+The `ai-endpoint` can point to the optional `cmd/ai-proxy` service, which
+translates the generic request into provider-specific API calls.
+
+---
+
 ## Auditing and Observability
 
 All AI interactions must be:
 - logged (metadata only, no raw sensitive inputs)
 - traceable to run/job IDs
 - bounded in cost and time
+- persisted as advisory explanations with provider/model/prompt metadata
 
 AI usage must be observable and accountable.
 

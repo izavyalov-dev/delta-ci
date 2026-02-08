@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/state"
@@ -12,18 +14,23 @@ import (
 const (
 	defaultMaxFailureSummaryLen = 160
 	defaultMaxFailureDetailsLen = 512
+	failureRuleVersion          = "v2"
 )
 
 // FailureInput captures sanitized inputs for rule-based analysis.
 type FailureInput struct {
-	RunID     string
-	JobID     string
-	JobName   string
-	AttemptID string
-	Status    protocol.CompleteStatus
-	ExitCode  int
-	Summary   string
-	Artifacts []state.ArtifactRef
+	RunID         string
+	JobID         string
+	JobName       string
+	AttemptID     string
+	AttemptNumber int
+	Status        protocol.CompleteStatus
+	ExitCode      int
+	Summary       string
+	Artifacts     []state.ArtifactRef
+	CacheEvents   []protocol.CacheEvent
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
 }
 
 // FailureAnalyzer produces a failure explanation for a job attempt.
@@ -68,19 +75,24 @@ func (a *RuleBasedFailureAnalyzer) Analyze(ctx context.Context, input FailureInp
 	}
 
 	summary := sanitizeText(input.Summary, a.MaxSummaryLen)
+	signals := buildFailureSignals(input)
 	category, confidence, concise := classifyFailure(input.JobName, summary, input.ExitCode)
 
-	details := buildFailureDetails(input, summary, a.MaxDetailsLen)
+	details := buildFailureDetails(input, summary, signals, a.MaxDetailsLen)
 	if a.EnableAI && a.Advisor != nil {
 		if aiSummary, err := a.Advisor.Explain(ctx, FailureInput{
-			RunID:     input.RunID,
-			JobID:     input.JobID,
-			JobName:   input.JobName,
-			AttemptID: input.AttemptID,
-			Status:    input.Status,
-			ExitCode:  input.ExitCode,
-			Summary:   summary,
-			Artifacts: input.Artifacts,
+			RunID:         input.RunID,
+			JobID:         input.JobID,
+			JobName:       input.JobName,
+			AttemptID:     input.AttemptID,
+			AttemptNumber: input.AttemptNumber,
+			Status:        input.Status,
+			ExitCode:      input.ExitCode,
+			Summary:       summary,
+			Artifacts:     input.Artifacts,
+			CacheEvents:   input.CacheEvents,
+			StartedAt:     input.StartedAt,
+			FinishedAt:    input.FinishedAt,
 		}); err == nil {
 			aiSummary = sanitizeText(aiSummary, a.MaxDetailsLen)
 			if aiSummary != "" {
@@ -95,6 +107,8 @@ func (a *RuleBasedFailureAnalyzer) Analyze(ctx context.Context, input FailureInp
 		Confidence:   confidence,
 		Summary:      concise,
 		Details:      details,
+		RuleVersion:  failureRuleVersion,
+		Signals:      signals,
 	}, nil
 }
 
@@ -105,7 +119,7 @@ func classifyFailure(jobName, summary string, exitCode int) (state.FailureCatego
 	switch {
 	case containsAny(lower, "timed out", "timeout", "deadline exceeded") || exitCode == 124:
 		return state.FailureCategoryInfra, state.FailureConfidenceMedium, fmt.Sprintf("Job timed out (exit code %d).", exitCode)
-	case containsAny(lower, "out of memory", "no space", "disk full", "signal: killed", "killed"):
+	case containsAny(lower, "out of memory", "no space", "disk full", "signal: killed", "killed") || exitCode == 137:
 		return state.FailureCategoryInfra, state.FailureConfidenceHigh, fmt.Sprintf("Resource exhaustion detected (exit code %d).", exitCode)
 	case containsAny(lower, "dial tcp", "connection refused", "i/o timeout", "temporary failure", "tls handshake timeout"):
 		return state.FailureCategoryInfra, state.FailureConfidenceHigh, fmt.Sprintf("Network error detected (exit code %d).", exitCode)
@@ -124,13 +138,22 @@ func classifyFailure(jobName, summary string, exitCode int) (state.FailureCatego
 	}
 }
 
-func buildFailureDetails(input FailureInput, summary string, maxLen int) string {
+func buildFailureDetails(input FailureInput, summary string, signals state.FailureSignals, maxLen int) string {
 	details := ""
 	if summary != "" && !isGenericSummary(summary) {
 		details = appendDetail(details, "Observed: "+summary, maxLen)
 	}
 	if input.ExitCode != 0 {
 		details = appendDetail(details, fmt.Sprintf("Exit code: %d", input.ExitCode), maxLen)
+	}
+	if signals.AttemptNumber > 0 {
+		details = appendDetail(details, fmt.Sprintf("Attempt: %d", signals.AttemptNumber), maxLen)
+	}
+	if signals.DurationSeconds > 0 {
+		details = appendDetail(details, fmt.Sprintf("Duration: %ds", signals.DurationSeconds), maxLen)
+	}
+	if len(signals.CacheEvents) > 0 {
+		details = appendDetail(details, fmt.Sprintf("Cache events: %d", len(signals.CacheEvents)), maxLen)
 	}
 	for _, artifact := range input.Artifacts {
 		if strings.EqualFold(artifact.Type, "log") {
@@ -139,6 +162,66 @@ func buildFailureDetails(input FailureInput, summary string, maxLen int) string 
 		}
 	}
 	return details
+}
+
+func buildFailureSignals(input FailureInput) state.FailureSignals {
+	signals := state.FailureSignals{
+		ExitCode:      input.ExitCode,
+		AttemptNumber: input.AttemptNumber,
+	}
+	if input.StartedAt != nil && input.FinishedAt != nil && !input.FinishedAt.Before(*input.StartedAt) {
+		duration := input.FinishedAt.Sub(*input.StartedAt)
+		signals.DurationSeconds = int(duration.Seconds())
+	}
+
+	artifactTypes := make(map[string]struct{})
+	for _, artifact := range input.Artifacts {
+		if artifact.Type == "" {
+			continue
+		}
+		artifactTypes[artifact.Type] = struct{}{}
+		if strings.EqualFold(artifact.Type, "log") {
+			signals.HasLog = true
+		}
+	}
+	if len(artifactTypes) > 0 {
+		list := make([]string, 0, len(artifactTypes))
+		for name := range artifactTypes {
+			list = append(list, name)
+		}
+		sort.Strings(list)
+		signals.ArtifactTypes = list
+	}
+
+	if len(input.CacheEvents) > 0 {
+		cacheSignals := make([]state.CacheEventSignal, 0, len(input.CacheEvents))
+		for _, event := range input.CacheEvents {
+			if event.Type == "" || event.Key == "" {
+				continue
+			}
+			cacheSignals = append(cacheSignals, state.CacheEventSignal{
+				Type:     event.Type,
+				Key:      event.Key,
+				Hit:      event.Hit,
+				ReadOnly: event.ReadOnly,
+			})
+		}
+		sort.Slice(cacheSignals, func(i, j int) bool {
+			if cacheSignals[i].Type != cacheSignals[j].Type {
+				return cacheSignals[i].Type < cacheSignals[j].Type
+			}
+			if cacheSignals[i].Key != cacheSignals[j].Key {
+				return cacheSignals[i].Key < cacheSignals[j].Key
+			}
+			if cacheSignals[i].Hit != cacheSignals[j].Hit {
+				return !cacheSignals[i].Hit && cacheSignals[j].Hit
+			}
+			return cacheSignals[i].ReadOnly && !cacheSignals[j].ReadOnly
+		})
+		signals.CacheEvents = cacheSignals
+	}
+
+	return signals
 }
 
 func appendDetail(existing, next string, maxLen int) string {

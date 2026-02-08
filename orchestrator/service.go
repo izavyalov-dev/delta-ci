@@ -359,10 +359,12 @@ func (s *Service) startRun(ctx context.Context, run state.Run) (RunDetails, erro
 	jobDetails := make([]JobDetail, 0, len(jobRecords))
 	for _, record := range jobRecords {
 		jobDetails = append(jobDetails, JobDetail{
-			Job:                 record.job,
-			Attempts:            []state.JobAttempt{record.attempt},
-			Artifacts:           nil,
-			FailureExplanations: nil,
+			Job:                   record.job,
+			Attempts:              []state.JobAttempt{record.attempt},
+			Artifacts:             nil,
+			FailureExplanations:   nil,
+			FailureAIExplanations: nil,
+			FixSuggestions:        nil,
 		})
 	}
 
@@ -494,12 +496,22 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 		if err != nil {
 			return RunDetails{}, err
 		}
+		failureAIExplanations, err := s.store.ListFailureAIExplanationsByJob(ctx, job.ID)
+		if err != nil {
+			return RunDetails{}, err
+		}
+		fixSuggestions, err := s.store.ListFixSuggestionsByJob(ctx, job.ID)
+		if err != nil {
+			return RunDetails{}, err
+		}
 
 		jobDetails = append(jobDetails, JobDetail{
-			Job:                 job,
-			Attempts:            attempts,
-			Artifacts:           artifacts,
-			FailureExplanations: failureExplanations,
+			Job:                   job,
+			Attempts:              attempts,
+			Artifacts:             artifacts,
+			FailureExplanations:   failureExplanations,
+			FailureAIExplanations: failureAIExplanations,
+			FixSuggestions:        fixSuggestions,
 		})
 	}
 
@@ -662,6 +674,7 @@ func (s *Service) AckLease(ctx context.Context, msg protocol.AckLease) error {
 	}
 	ackLogger := observability.WithLease(observability.WithJob(observability.WithRun(s.logger, job.RunID), job.ID), lease.ID)
 	ackLogger.Info("lease acknowledged", "event", "lease_acknowledged", "runner_id", msg.RunnerID)
+	s.updateFixSuggestionValidationByJob(ctx, job.ID, state.FixSuggestionValidationRunning, "")
 	s.metrics.IncLease("active")
 	if attempt.State != state.JobStateStarting {
 		s.metrics.IncJob("starting")
@@ -852,7 +865,13 @@ func (s *Service) CompleteLease(ctx context.Context, msg protocol.Complete) erro
 	}
 
 	if target == state.JobStateFailed {
-		s.recordFailureExplanation(ctx, job, attempt, msg, artifactRefs)
+		s.recordFailureExplanation(ctx, job, attempt, msg, artifactRefs, msg.Caches)
+	}
+	switch target {
+	case state.JobStateSucceeded:
+		s.updateFixSuggestionValidationByJob(ctx, job.ID, state.FixSuggestionValidationSucceeded, msg.Summary)
+	case state.JobStateFailed, state.JobStateTimedOut:
+		s.updateFixSuggestionValidationByJob(ctx, job.ID, state.FixSuggestionValidationFailed, msg.Summary)
 	}
 
 	if run.State == state.RunStateCancelRequested {
@@ -970,6 +989,7 @@ func (s *Service) CancelLease(ctx context.Context, msg protocol.CancelAck) error
 	}
 	s.metrics.IncJob("canceled")
 	s.metrics.IncLease("canceled")
+	s.updateFixSuggestionValidationByJob(ctx, job.ID, state.FixSuggestionValidationCanceled, msg.Summary)
 
 	if err := s.store.MarkJobAttemptCompleted(ctx, attempt.ID, now); err != nil {
 		return err
@@ -1002,19 +1022,27 @@ func (s *Service) CancelLease(ctx context.Context, msg protocol.CancelAck) error
 	return nil
 }
 
-func (s *Service) recordFailureExplanation(ctx context.Context, job state.Job, attempt state.JobAttempt, msg protocol.Complete, artifacts []state.ArtifactRef) {
+func (s *Service) recordFailureExplanation(ctx context.Context, job state.Job, attempt state.JobAttempt, msg protocol.Complete, artifacts []state.ArtifactRef, caches []protocol.CacheEvent) {
 	if s.analyzer == nil {
 		return
 	}
+	finishedAt := msg.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
 	explanation, err := s.analyzer.Analyze(ctx, FailureInput{
-		RunID:     job.RunID,
-		JobID:     job.ID,
-		JobName:   job.Name,
-		AttemptID: attempt.ID,
-		Status:    msg.Status,
-		ExitCode:  msg.ExitCode,
-		Summary:   msg.Summary,
-		Artifacts: artifacts,
+		RunID:         job.RunID,
+		JobID:         job.ID,
+		JobName:       job.Name,
+		AttemptID:     attempt.ID,
+		AttemptNumber: attempt.AttemptNumber,
+		Status:        msg.Status,
+		ExitCode:      msg.ExitCode,
+		Summary:       msg.Summary,
+		Artifacts:     artifacts,
+		CacheEvents:   caches,
+		StartedAt:     attempt.StartedAt,
+		FinishedAt:    &finishedAt,
 	})
 	if err != nil {
 		s.metrics.IncFailure("failure_analysis_failed")
@@ -1030,6 +1058,17 @@ func (s *Service) recordFailureExplanation(ctx context.Context, job state.Job, a
 		return
 	}
 	s.logger.Info("failure explanation recorded", "event", "failure_explanation_recorded", "job_id", job.ID, "attempt_id", attempt.ID, "category", explanation.Category, "confidence", explanation.Confidence)
+}
+
+func (s *Service) updateFixSuggestionValidationByJob(ctx context.Context, jobID string, status state.FixSuggestionValidationStatus, summary string) {
+	err := s.store.UpdateFixSuggestionValidationByJob(ctx, jobID, status, summary)
+	if err == nil {
+		return
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return
+	}
+	s.logger.Warn("fix suggestion validation status update failed", "event", "fix_validation_status_failed", "job_id", jobID, "status", status, "error", err)
 }
 
 func (s *Service) transitionJobAndAttempt(ctx context.Context, jobID, attemptID string, target state.JobState) error {

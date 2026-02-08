@@ -95,6 +95,33 @@ const (
 	FailureConfidenceHigh   FailureConfidence = "HIGH"
 )
 
+// CacheEventSignal captures cache behavior relevant to failure analysis.
+type CacheEventSignal struct {
+	Type     string `json:"type"`
+	Key      string `json:"key"`
+	Hit      bool   `json:"hit"`
+	ReadOnly bool   `json:"read_only,omitempty"`
+}
+
+// FailureSignals capture deterministic inputs used for classification.
+type FailureSignals struct {
+	ExitCode        int                `json:"exit_code,omitempty"`
+	AttemptNumber   int                `json:"attempt_number,omitempty"`
+	DurationSeconds int                `json:"duration_seconds,omitempty"`
+	CacheEvents     []CacheEventSignal `json:"cache_events,omitempty"`
+	ArtifactTypes   []string           `json:"artifact_types,omitempty"`
+	HasLog          bool               `json:"has_log,omitempty"`
+}
+
+func (s FailureSignals) IsEmpty() bool {
+	return s.ExitCode == 0 &&
+		s.AttemptNumber == 0 &&
+		s.DurationSeconds == 0 &&
+		len(s.CacheEvents) == 0 &&
+		len(s.ArtifactTypes) == 0 &&
+		!s.HasLog
+}
+
 // FailureExplanation summarizes why a job attempt failed.
 type FailureExplanation struct {
 	ID           int64             `json:"id"`
@@ -103,7 +130,60 @@ type FailureExplanation struct {
 	Summary      string            `json:"summary"`
 	Confidence   FailureConfidence `json:"confidence"`
 	Details      string            `json:"details,omitempty"`
+	RuleVersion  string            `json:"rule_version,omitempty"`
+	Signals      FailureSignals    `json:"signals,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
+}
+
+// FailureAIExplanation stores advisory AI explanations for a failed attempt.
+type FailureAIExplanation struct {
+	ID            int64     `json:"id"`
+	JobAttemptID  string    `json:"job_attempt_id"`
+	Provider      string    `json:"provider"`
+	Model         string    `json:"model,omitempty"`
+	PromptVersion string    `json:"prompt_version"`
+	Summary       string    `json:"summary"`
+	Details       string    `json:"details,omitempty"`
+	LatencyMS     int       `json:"latency_ms,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type FixSuggestionPatchFormat string
+
+const (
+	FixSuggestionPatchFormatUnifiedDiff FixSuggestionPatchFormat = "UNIFIED_DIFF"
+)
+
+type FixSuggestionValidationStatus string
+
+const (
+	FixSuggestionValidationPending   FixSuggestionValidationStatus = "PENDING"
+	FixSuggestionValidationQueued    FixSuggestionValidationStatus = "VALIDATION_QUEUED"
+	FixSuggestionValidationRunning   FixSuggestionValidationStatus = "VALIDATION_RUNNING"
+	FixSuggestionValidationSucceeded FixSuggestionValidationStatus = "VALIDATION_SUCCEEDED"
+	FixSuggestionValidationFailed    FixSuggestionValidationStatus = "VALIDATION_FAILED"
+	FixSuggestionValidationCanceled  FixSuggestionValidationStatus = "VALIDATION_CANCELED"
+)
+
+// FixSuggestion stores an advisory patch candidate and validation outcome.
+type FixSuggestion struct {
+	ID                int64                         `json:"id"`
+	JobAttemptID      string                        `json:"job_attempt_id"`
+	Provider          string                        `json:"provider"`
+	Model             string                        `json:"model,omitempty"`
+	PromptVersion     string                        `json:"prompt_version"`
+	Title             string                        `json:"title"`
+	Summary           string                        `json:"summary"`
+	PatchFormat       FixSuggestionPatchFormat      `json:"patch_format"`
+	PatchUnifiedDiff  string                        `json:"patch_unified_diff"`
+	PatchSHA256       string                        `json:"patch_sha256"`
+	ValidationRunID   *string                       `json:"validation_run_id,omitempty"`
+	ValidationJobID   *string                       `json:"validation_job_id,omitempty"`
+	ValidationStatus  FixSuggestionValidationStatus `json:"validation_status"`
+	ValidationSummary string                        `json:"validation_summary,omitempty"`
+	RequiresApproval  bool                          `json:"requires_approval"`
+	CreatedAt         time.Time                     `json:"created_at"`
+	UpdatedAt         time.Time                     `json:"updated_at"`
 }
 
 // RunTrigger captures webhook metadata for idempotency and reporting.

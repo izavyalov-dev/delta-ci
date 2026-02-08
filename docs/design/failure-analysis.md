@@ -48,6 +48,8 @@ Failure analysis operates on **post-execution data** only.
 - structured test reports (e.g., JUnit/TRX)
 - artifact metadata
 - execution timings
+- cache events (hits/misses, read-only)
+- attempt numbers and retry counts
 
 ### Forbidden Inputs
 - secrets
@@ -221,6 +223,7 @@ When a fix is proposed:
 6. Await user decision
 
 A failed validation must not modify repository state.
+Validation outcomes are stored as advisory metadata (`VALIDATION_*` status + summary).
 
 ---
 
@@ -232,6 +235,11 @@ For every analyzed failure, Delta CI must be able to explain:
 - which signals were used
 - whether AI was involved
 - what uncertainty remains
+- which classification rule version applied
+
+User-facing outputs include both rule-based and AI advisory sections:
+- run APIs expose `failure_explanations` and `failure_ai_explanations` per job
+- GitHub summaries label AI text as advisory and include evidence links (for example log artifact URIs)
 
 Opaque analysis is considered a bug.
 
@@ -243,6 +251,7 @@ Failure analysis events must be:
 - logged
 - correlated with run/job IDs
 - traceable to inputs and outputs
+- include AI advisory metadata when AI is used
 
 Audit logs must not contain sensitive data.
 

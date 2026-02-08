@@ -140,6 +140,9 @@ Returns:
 *	lease IDs are never returned; artifacts is an array (empty when none)
 *	artifact URIs are untrusted input and must be sanitized before use
 *	failure explanations are advisory and may be empty
+*	failure explanations include rule versions and classification signals when available
+*	AI explanations are advisory and include provider/model/prompt metadata when available
+*	fix suggestions are advisory unified diffs and require explicit human approval before apply
 
 Example response:
 ```json
@@ -194,8 +197,58 @@ Example response:
           "category": "USER",
           "summary": "Test step failed (exit code 1).",
           "confidence": "MEDIUM",
+          "rule_version": "v2",
+          "signals": {
+            "exit_code": 1,
+            "attempt_number": 1,
+            "duration_seconds": 240,
+            "cache_events": [
+              {
+                "type": "deps",
+                "key": "go:deps:...",
+                "hit": false,
+                "read_only": true
+              }
+            ],
+            "artifact_types": ["log"],
+            "has_log": true
+          },
           "details": "Observed: exit status 1 | Log: s3://delta-ci-artifacts/runs/run_456/jobs/job_123/log.txt",
           "created_at": "2026-01-12T08:05:01Z"
+        }
+      ],
+      "failure_ai_explanations": [
+        {
+          "id": 1,
+          "job_attempt_id": "attempt_abc",
+          "provider": "openai",
+          "model": "gpt-4o-mini",
+          "prompt_version": "failure-explain-v1",
+          "summary": "Likely assertion mismatch in unit tests.",
+          "details": "Check changed fixtures and expected values.",
+          "latency_ms": 812,
+          "created_at": "2026-01-12T08:05:02Z"
+        }
+      ],
+      "fix_suggestions": [
+        {
+          "id": 7,
+          "job_attempt_id": "attempt_abc",
+          "provider": "openai",
+          "model": "gpt-4o-mini",
+          "prompt_version": "fix-v1",
+          "title": "Adjust assertion message",
+          "summary": "Update expected output in flaky test.",
+          "patch_format": "UNIFIED_DIFF",
+          "patch_unified_diff": "--- a/foo_test.go\n+++ b/foo_test.go\n@@ -10 +10 @@\n-expected := \"x\"\n+expected := \"y\"\n",
+          "patch_sha256": "sha256hex...",
+          "validation_run_id": "run_validate_1",
+          "validation_job_id": "job_validate_1",
+          "validation_status": "VALIDATION_SUCCEEDED",
+          "validation_summary": "validation passed",
+          "requires_approval": true,
+          "created_at": "2026-01-12T08:05:03Z",
+          "updated_at": "2026-01-12T08:06:20Z"
         }
       ]
     }
@@ -229,6 +282,37 @@ POST /api/v1/runs/{run_id}/rerun
 *	previous attempts remain immutable
 *	may optionally filter jobs
 *	idempotent when `Idempotency-Key` header is provided
+
+### Fix Suggestion API
+
+Create fix suggestion for a job (advisory only):
+```
+POST /api/v1/jobs/{job_id}/fix-suggestions
+```
+
+Request
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "prompt_version": "fix-v1",
+  "title": "Adjust assertion message",
+  "summary": "Update expected output in flaky test.",
+  "patch_unified_diff": "--- a/foo_test.go\n+++ b/foo_test.go\n@@ -10 +10 @@\n-expected := \"x\"\n+expected := \"y\"\n",
+  "validate_now": true
+}
+```
+
+Queue isolated validation run for an existing suggestion:
+```
+POST /api/v1/fix-suggestions/{suggestion_id}/validate
+```
+
+Semantics:
+*	fix suggestions are stored as untrusted advisory patches
+*	validation runs apply patch in sandbox and run checks
+*	validation results are reported in `validation_status` and `validation_summary`
+*	no endpoint applies patches to repository state
 
 ## Status Reporting API
 

@@ -80,6 +80,8 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 	}
 	jobArtifacts := make(map[string][]state.Artifact, len(jobs))
 	jobFailures := make(map[string]*state.FailureExplanation, len(jobs))
+	jobAI := make(map[string]*state.FailureAIExplanation, len(jobs))
+	jobFixes := make(map[string]*state.FixSuggestion, len(jobs))
 	for _, job := range jobs {
 		artifacts, err := r.store.ListArtifactsByJob(ctx, job.ID)
 		if err != nil {
@@ -94,9 +96,25 @@ func (r *Reporter) ReportRun(ctx context.Context, runID string) error {
 		if len(explanations) > 0 {
 			jobFailures[job.ID] = &explanations[0]
 		}
+
+		aiExplanations, err := r.store.ListFailureAIExplanationsByJob(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		if len(aiExplanations) > 0 {
+			jobAI[job.ID] = &aiExplanations[0]
+		}
+
+		fixSuggestions, err := r.store.ListFixSuggestionsByJob(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		if len(fixSuggestions) > 0 {
+			jobFixes[job.ID] = &fixSuggestions[0]
+		}
 	}
 
-	title, summary := buildSummary(run, plan, jobs, jobArtifacts, jobFailures)
+	title, summary := buildSummary(run, plan, jobs, jobArtifacts, jobFailures, jobAI, jobFixes)
 	checkReq := buildCheckRun(r.checkName, run, title, summary)
 
 	checkRunID := report.CheckRunID
@@ -241,7 +259,7 @@ func isReportableTerminal(stateValue state.RunState) bool {
 	}
 }
 
-func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation) (string, string) {
+func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifacts map[string][]state.Artifact, failures map[string]*state.FailureExplanation, ai map[string]*state.FailureAIExplanation, fixes map[string]*state.FixSuggestion) (string, string) {
 	title := fmt.Sprintf("Delta CI: %s", run.State)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Run `%s`\n\n", run.ID)
@@ -276,9 +294,29 @@ func buildSummary(run state.Run, plan *state.RunPlan, jobs []state.Job, artifact
 		if job.Reason != "" {
 			fmt.Fprintf(&b, "  Reason: %s\n", sanitize(job.Reason))
 		}
+		if fix := fixes[job.ID]; fix != nil {
+			if fixSummary := summarizeFixValidation(*fix); fixSummary != "" {
+				fmt.Fprintf(&b, "  Fix validation: %s\n", sanitize(fixSummary))
+			}
+		}
 		if job.State == state.JobStateFailed || job.State == state.JobStateTimedOut {
 			if failure := failures[job.ID]; failure != nil {
-				fmt.Fprintf(&b, "  Failure: %s (%s/%s)\n", sanitize(failure.Summary), sanitize(string(failure.Category)), sanitize(string(failure.Confidence)))
+				rule := ""
+				if failure.RuleVersion != "" {
+					rule = " rule " + sanitize(failure.RuleVersion)
+				}
+				fmt.Fprintf(&b, "  Failure: %s (%s/%s%s)\n", sanitize(failure.Summary), sanitize(string(failure.Category)), sanitize(string(failure.Confidence)), rule)
+				if signalSummary := summarizeFailureSignals(failure.Signals); signalSummary != "" {
+					fmt.Fprintf(&b, "  Signals: %s\n", sanitize(signalSummary))
+				}
+			}
+			if aiExplanation := ai[job.ID]; aiExplanation != nil {
+				if aiSummary := summarizeAI(*aiExplanation); aiSummary != "" {
+					fmt.Fprintf(&b, "  AI advisory: %s\n", sanitize(aiSummary))
+				}
+			}
+			if evidence := summarizeEvidence(artifacts[job.ID]); evidence != "" {
+				fmt.Fprintf(&b, "  Evidence: %s\n", sanitize(evidence))
 			}
 		}
 		arts := artifacts[job.ID]
@@ -317,6 +355,94 @@ func sanitize(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.TrimSpace(value)
 	return value
+}
+
+func summarizeFailureSignals(signals state.FailureSignals) string {
+	parts := make([]string, 0, 4)
+	if signals.ExitCode != 0 {
+		parts = append(parts, fmt.Sprintf("exit=%d", signals.ExitCode))
+	}
+	if signals.AttemptNumber > 0 {
+		parts = append(parts, fmt.Sprintf("attempt=%d", signals.AttemptNumber))
+	}
+	if signals.DurationSeconds > 0 {
+		parts = append(parts, fmt.Sprintf("duration=%ds", signals.DurationSeconds))
+	}
+	if len(signals.CacheEvents) > 0 {
+		parts = append(parts, fmt.Sprintf("caches=%d", len(signals.CacheEvents)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+func summarizeAI(explanation state.FailureAIExplanation) string {
+	summary := sanitize(explanation.Summary)
+	if summary == "" {
+		return ""
+	}
+	meta := make([]string, 0, 3)
+	if explanation.Provider != "" {
+		meta = append(meta, explanation.Provider)
+	}
+	if explanation.Model != "" {
+		meta = append(meta, explanation.Model)
+	}
+	if explanation.PromptVersion != "" {
+		meta = append(meta, explanation.PromptVersion)
+	}
+	if len(meta) == 0 {
+		return summary
+	}
+	return fmt.Sprintf("%s [%s]", summary, strings.Join(meta, "/"))
+}
+
+func summarizeEvidence(artifacts []state.Artifact) string {
+	if len(artifacts) == 0 {
+		return ""
+	}
+	uris := make([]string, 0, 2)
+	for _, artifact := range artifacts {
+		if !strings.EqualFold(artifact.Type, "log") && !strings.EqualFold(artifact.Type, "junit") && !strings.EqualFold(artifact.Type, "report") {
+			continue
+		}
+		uris = append(uris, sanitize(artifact.URI))
+		if len(uris) == 2 {
+			break
+		}
+	}
+	if len(uris) == 0 {
+		return ""
+	}
+	return strings.Join(uris, "; ")
+}
+
+func summarizeFixValidation(suggestion state.FixSuggestion) string {
+	if suggestion.ID == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	parts = append(parts, fmt.Sprintf("suggestion #%d %s", suggestion.ID, suggestion.ValidationStatus))
+	if suggestion.ValidationSummary != "" {
+		parts = append(parts, suggestion.ValidationSummary)
+	}
+	if suggestion.ValidationRunID != nil || suggestion.ValidationJobID != nil {
+		refParts := make([]string, 0, 2)
+		if suggestion.ValidationRunID != nil && *suggestion.ValidationRunID != "" {
+			refParts = append(refParts, "run="+*suggestion.ValidationRunID)
+		}
+		if suggestion.ValidationJobID != nil && *suggestion.ValidationJobID != "" {
+			refParts = append(refParts, "job="+*suggestion.ValidationJobID)
+		}
+		if len(refParts) > 0 {
+			parts = append(parts, strings.Join(refParts, " "))
+		}
+	}
+	if suggestion.RequiresApproval {
+		parts = append(parts, "approval required")
+	}
+	return strings.Join(parts, " | ")
 }
 
 func isNotFound(err error) bool {
