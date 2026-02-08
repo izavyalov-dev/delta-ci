@@ -25,6 +25,7 @@ import (
 	"github.com/izavyalov-dev/delta-ci/planner"
 	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/state"
+	"github.com/izavyalov-dev/delta-ci/web"
 )
 
 func main() {
@@ -179,6 +180,8 @@ func runServe(args []string) error {
 	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
+	webEnabled := flags.Bool("web-enabled", !envBool("DELTA_WEB_DISABLED"), "Enable web dashboard")
+	webDev := flags.Bool("web-dev", envBool("DELTA_WEB_DEV"), "Serve templates from disk for hot-reload")
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
@@ -208,13 +211,28 @@ func runServe(args []string) error {
 	}
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer)
-	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
+	apiHandler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
 		GitHubWebhookSecret: *githubWebhookSecret,
 	})
 
+	var rootHandler http.Handler
+	if *webEnabled {
+		webHandler := web.NewHandler(service, observability.NewLogger("web"), web.Config{
+			DevMode: *webDev,
+		})
+		mux := http.NewServeMux()
+		mux.Handle("/api/", apiHandler)
+		mux.Handle("/healthz", apiHandler)
+		mux.Handle("/metrics", apiHandler)
+		mux.Handle("/", webHandler)
+		rootHandler = mux
+	} else {
+		rootHandler = apiHandler
+	}
+
 	server := &http.Server{
 		Addr:              *listen,
-		Handler:           handler,
+		Handler:           rootHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

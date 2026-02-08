@@ -1,0 +1,5 @@
+{{define "pagination"}}{{if gt .TotalPages 1}}<div class="pagination">
+    {{if gt .Page 1}}<a href="?page={{sub .Page 1}}{{if .Filter.Repo}}&repo={{.Filter.Repo}}{{end}}{{if .Filter.State}}&state={{.Filter.State}}{{end}}">&laquo; Prev</a>{{end}}
+    {{range seq 1 .TotalPages}}{{if eq . $.Page}}<span class="current">{{.}}</span>{{else}}<a href="?page={{.}}{{if $.Filter.Repo}}&repo={{$.Filter.Repo}}{{end}}{{if $.Filter.State}}&state={{$.Filter.State}}{{end}}">{{.}}</a>{{end}}{{end}}
+    {{if lt .Page .TotalPages}}<a href="?page={{add .Page 1}}{{if .Filter.Repo}}&repo={{.Filter.Repo}}{{end}}{{if .Filter.State}}&state={{.Filter.State}}{{end}}">Next &raquo;</a>{{end}}
+</div>{{end}}{{end}}

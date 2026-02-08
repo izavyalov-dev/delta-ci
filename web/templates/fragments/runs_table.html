@@ -1,0 +1,16 @@
+{{define "runs_table"}}{{if .Runs}}<table>
+    <thead><tr><th>ID</th><th>Repo</th><th>State</th><th>Ref</th><th>Commit</th><th>Jobs</th><th>Created</th></tr></thead>
+    <tbody>
+    {{range .Runs}}<tr>
+        <td><a href="/runs/{{.ID}}">{{.ID}}</a></td>
+        <td>{{.RepoID}}</td>
+        <td>{{template "runBadge" .State}}</td>
+        <td class="truncate">{{.Ref}}</td>
+        <td class="mono">{{shortSHA .CommitSHA}}</td>
+        <td>{{.JobCount}}</td>
+        <td>{{timeAgo .CreatedAt}}</td>
+    </tr>{{end}}
+    </tbody>
+</table>
+{{template "pagination" .}}
+{{else}}<p>No runs found.</p>{{end}}{{end}}

@@ -1,0 +1,8 @@
+{{define "content"}}<hgroup>
+    <h2>Run {{.Details.Run.ID}}</h2>
+    <p>{{.Details.Run.RepoID}} &middot; <code class="mono">{{shortSHA .Details.Run.CommitSHA}}</code> &middot; {{.Details.Run.Ref}}</p>
+</hgroup>
+
+<div id="run-status-area"{{if .IsActive}} hx-get="/fragments/run-status/{{.Details.Run.ID}}" hx-trigger="every 5s [!document.hidden]" hx-swap="innerHTML"{{end}}>
+    {{template "run_status" .}}
+</div>{{end}}

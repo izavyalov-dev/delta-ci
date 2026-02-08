@@ -1,0 +1,55 @@
+{{define "run_status"}}<section>
+    <table>
+        <tr><td>State</td><td>{{template "runBadge" .Details.Run.State}}</td></tr>
+        <tr><td>Created</td><td>{{timeAgo .Details.Run.CreatedAt}}</td></tr>
+        <tr><td>Updated</td><td>{{timeAgo .Details.Run.UpdatedAt}}</td></tr>
+    </table>
+
+    {{if .IsActive}}<div>
+        <form method="POST" action="/runs/{{.Details.Run.ID}}/cancel" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="secondary" hx-post="/runs/{{.Details.Run.ID}}/cancel" hx-target="#action-feedback" hx-confirm="Cancel this run?">Cancel Run</button>
+        </form>
+        <form method="POST" action="/runs/{{.Details.Run.ID}}/rerun" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="contrast" hx-post="/runs/{{.Details.Run.ID}}/rerun" hx-target="#action-feedback">Rerun</button>
+        </form>
+    </div>{{else}}<div>
+        <form method="POST" action="/runs/{{.Details.Run.ID}}/rerun" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <button type="submit" class="contrast" hx-post="/runs/{{.Details.Run.ID}}/rerun" hx-target="#action-feedback">Rerun</button>
+        </form>
+    </div>{{end}}
+    <div id="action-feedback"></div>
+</section>
+
+{{if .Details.Plan}}<section>
+    <h3>Plan</h3>
+    <table>
+        <tr><td>Source</td><td>{{.Details.Plan.RecipeSource}}</td></tr>
+        {{if .Details.Plan.Fingerprint}}<tr><td>Fingerprint</td><td class="mono">{{.Details.Plan.Fingerprint}}</td></tr>{{end}}
+        {{if .Details.Plan.Explain}}<tr><td>Explanation</td><td class="wrap">{{.Details.Plan.Explain}}</td></tr>{{end}}
+    </table>
+    {{if .Details.Plan.SkippedJobs}}<details>
+        <summary>Skipped Jobs ({{len .Details.Plan.SkippedJobs}})</summary>
+        <table>
+            <thead><tr><th>Name</th><th>Reason</th></tr></thead>
+            <tbody>
+            {{range .Details.Plan.SkippedJobs}}<tr><td>{{.Name}}</td><td>{{.Reason}}</td></tr>{{end}}
+            </tbody>
+        </table>
+    </details>{{end}}
+</section>{{end}}
+
+<section>
+    <h3>Jobs ({{len .Details.Jobs}})</h3>
+    <ul class="job-list">
+    {{range $idx, $job := .Details.Jobs}}<li class="job-item">
+        <div class="job-header" hx-get="/fragments/job-detail/{{$.Details.Run.ID}}/{{$idx}}" hx-trigger="click once" hx-target="#job-body-{{$idx}}" hx-swap="innerHTML">
+            <span>{{$job.Job.Name}} {{if $job.Job.Required}}(required){{end}}</span>
+            <span>{{template "jobBadge" $job.Job.State}}</span>
+        </div>
+        <div class="job-body" id="job-body-{{$idx}}"></div>
+    </li>{{end}}
+    </ul>
+</section>{{end}}

@@ -1,0 +1,14 @@
+{{define "content"}}<h2>Settings</h2>
+<section>
+    <h3>System</h3>
+    <table>
+        <tr><td>Version</td><td>{{.Version}}</td></tr>
+    </table>
+</section>
+<section>
+    <h3>Endpoints</h3>
+    <ul>
+        <li><a href="/healthz">/healthz</a> — Health check</li>
+        <li><a href="/metrics">/metrics</a> — Prometheus metrics</li>
+    </ul>
+</section>{{end}}

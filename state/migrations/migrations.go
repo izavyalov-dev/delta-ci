@@ -53,6 +53,9 @@ var failureAIExplanations string
 //go:embed 0015_fix_suggestions.sql
 var fixSuggestions string
 
+//go:embed 0016_list_indexes.sql
+var listIndexes string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
@@ -70,4 +73,5 @@ var All = []Migration{
 	{ID: "0013_failure_explanations_signals", Script: failureExplanationSignals},
 	{ID: "0014_failure_ai_explanations", Script: failureAIExplanations},
 	{ID: "0015_fix_suggestions", Script: fixSuggestions},
+	{ID: "0016_list_indexes", Script: listIndexes},
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Delta CI is an open-source, diff-aware, AI-assisted CI system written in Go. It reduces wasted compute by understanding what changed and what actually needs to run. The project is in early/design-driven phase (currently Phase 3: AI-assisted failure analysis).
+Delta CI is an open-source, diff-aware, AI-assisted CI system written in Go. It reduces wasted compute by understanding what changed and what actually needs to run. The project is in early/design-driven phase (currently Phase 5: Web Dashboard & Management UI).
 
 ## Build & Test Commands
 
@@ -43,6 +43,7 @@ go vet ./...
 - **Data Plane** (`runner/`): Executes untrusted jobs in isolation. Communicates only via lease/heartbeat/complete/cancel messages.
 - **Protocol** (`protocol/`): JSON message definitions between runner and orchestrator.
 - **State** (`state/`): PostgreSQL persistence layer with SQL migrations in `state/migrations/`.
+- **Web** (`web/`): Server-rendered dashboard using Go templates + htmx + Pico CSS, embedded via `embed.FS`.
 
 ### Entry Points
 
@@ -61,6 +62,10 @@ Runs, jobs, and leases follow explicit state machines defined in `docs/architect
 ### AI Integration
 
 AI is advisory only — never authoritative, never applies patches automatically. Failure explanations use sanitized log inputs via the ai-proxy. See `docs/design/ai-usage.md`.
+
+### Web Dashboard
+
+`web/` provides a server-rendered UI mounted on `/` (non-API routes). Controlled by `--web-enabled` (default true). Uses htmx for partial updates (filtering, polling, lazy-load) with no JS build step. Templates auto-escape via `html/template`. CSP headers enforced. CSRF via double-submit cookie on POST routes.
 
 ## Key Design Rules
 

@@ -1,0 +1,55 @@
+{{define "job_detail"}}<table>
+    <tr><td>Job ID</td><td class="mono">{{.Job.ID}}</td></tr>
+    <tr><td>State</td><td>{{template "jobBadge" .Job.State}}</td></tr>
+    <tr><td>Attempts</td><td>{{.Job.AttemptCount}}</td></tr>
+    {{if .Job.Reason}}<tr><td>Reason</td><td class="wrap">{{.Job.Reason}}</td></tr>{{end}}
+</table>
+
+{{if .Attempts}}<h4>Attempts</h4>
+<table>
+    <thead><tr><th>#</th><th>State</th><th>Started</th><th>Completed</th></tr></thead>
+    <tbody>
+    {{range .Attempts}}<tr>
+        <td>{{.AttemptNumber}}</td>
+        <td>{{template "jobBadge" .State}}</td>
+        <td>{{if .StartedAt}}{{timeAgo .StartedAt}}{{else}}&mdash;{{end}}</td>
+        <td>{{if .CompletedAt}}{{timeAgo .CompletedAt}}{{else}}&mdash;{{end}}</td>
+    </tr>{{end}}
+    </tbody>
+</table>{{end}}
+
+{{if .Artifacts}}<h4>Artifacts</h4>
+<table>
+    <thead><tr><th>Type</th><th>URI</th></tr></thead>
+    <tbody>
+    {{range .Artifacts}}<tr>
+        <td>{{.Type}}</td>
+        <td>{{$uri := safeArtifactURI .URI}}{{if $uri}}<a href="{{$uri}}" rel="noopener noreferrer" target="_blank">{{.URI}}</a>{{else}}{{.URI}}{{end}}</td>
+    </tr>{{end}}
+    </tbody>
+</table>{{end}}
+
+{{if .FailureExplanations}}<h4>Failure Analysis</h4>
+{{range .FailureExplanations}}<div>
+    <strong>{{failureCategoryLabel .Category}}</strong> ({{.Confidence}} confidence)
+    <p>{{.Summary}}</p>
+    {{if .Details}}<details><summary>Details</summary><p>{{.Details}}</p></details>{{end}}
+</div>{{end}}{{end}}
+
+{{if .FailureAIExplanations}}{{range .FailureAIExplanations}}<div class="ai-advisory">
+    <p><strong>{{.Summary}}</strong></p>
+    {{if .Details}}<details><summary>Details</summary><p>{{.Details}}</p></details>{{end}}
+    <small>Provider: {{.Provider}} | Model: {{.Model}} | Prompt: {{.PromptVersion}}</small>
+</div>{{end}}{{end}}
+
+{{if .FixSuggestions}}<h4>Fix Suggestions</h4>
+{{range .FixSuggestions}}<div class="ai-advisory">
+    <h5>{{.Title}}</h5>
+    <p>{{.Summary}}</p>
+    <div>Validation: {{template "validationBadge" .ValidationStatus}}</div>
+    {{if .PatchUnifiedDiff}}<details>
+        <summary>View Diff</summary>
+        <div class="diff-view">{{range diffLines .PatchUnifiedDiff}}<div class="{{.Class}}">{{.Text}}</div>{{end}}</div>
+    </details>{{end}}
+    <small>Provider: {{.Provider}} | Model: {{.Model}}</small>
+</div>{{end}}{{end}}{{end}}

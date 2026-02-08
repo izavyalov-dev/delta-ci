@@ -1,0 +1,33 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Delta CI</title>
+    <link rel="stylesheet" href="/static/css/pico.min.css">
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <header>
+        <nav>
+            {{template "nav" .}}
+        </nav>
+    </header>
+    <main>
+        {{template "flash" .}}
+        {{template "content" .}}
+    </main>
+    <footer>
+        <small>Delta CI — diff-aware, AI-assisted CI</small>
+    </footer>
+    <script src="/static/js/htmx.min.js" nonce=""></script>
+    <script nonce="">
+        document.body.addEventListener('htmx:configRequest', function(event) {
+            var csrf = document.cookie.replace(/(?:(?:^|.*;\s*)csrf_token\s*=\s*([^;]*).*$)|^.*$/, "$1");
+            if (csrf) {
+                event.detail.headers['X-CSRF-Token'] = csrf;
+            }
+        });
+    </script>
+</body>
+</html>{{end}}

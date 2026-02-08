@@ -1,0 +1,3 @@
+{{define "content"}}<div id="dashboard-stats" hx-get="/fragments/stats" hx-trigger="every 30s [!document.hidden]" hx-swap="innerHTML">
+    {{template "stats" .}}
+</div>{{end}}

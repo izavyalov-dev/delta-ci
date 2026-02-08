@@ -1,0 +1,24 @@
+{{define "content"}}<h2>Runs</h2>
+<div class="filter-bar">
+    <label>
+        Repository
+        <select name="repo" hx-get="/fragments/runs-table" hx-target="#runs-table-container" hx-trigger="change" hx-include=".filter-bar select">
+            <option value="">All</option>
+            {{range .Repos}}<option value="{{.}}"{{if eq . $.Filter.Repo}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+    </label>
+    <label>
+        State
+        <select name="state" hx-get="/fragments/runs-table" hx-target="#runs-table-container" hx-trigger="change" hx-include=".filter-bar select">
+            <option value="">All</option>
+            <option value="RUNNING"{{if eq .Filter.State "RUNNING"}} selected{{end}}>Running</option>
+            <option value="QUEUED"{{if eq .Filter.State "QUEUED"}} selected{{end}}>Queued</option>
+            <option value="SUCCESS"{{if eq .Filter.State "SUCCESS"}} selected{{end}}>Success</option>
+            <option value="FAILED"{{if eq .Filter.State "FAILED"}} selected{{end}}>Failed</option>
+            <option value="CANCELED"{{if eq .Filter.State "CANCELED"}} selected{{end}}>Canceled</option>
+        </select>
+    </label>
+</div>
+<div id="runs-table-container">
+    {{template "runs_table" .}}
+</div>{{end}}

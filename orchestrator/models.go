@@ -1,6 +1,10 @@
 package orchestrator
 
-import "github.com/izavyalov-dev/delta-ci/state"
+import (
+	"time"
+
+	"github.com/izavyalov-dev/delta-ci/state"
+)
 
 // CreateRunRequest captures inputs to start a new run.
 type CreateRunRequest struct {
@@ -43,4 +47,34 @@ type RunPlanDetail struct {
 	Fingerprint   string             `json:"fingerprint,omitempty"`
 	Explain       string             `json:"explain,omitempty"`
 	SkippedJobs   []state.SkippedJob `json:"skipped_jobs"`
+}
+
+// RunFilter describes filtering and pagination for run list queries.
+type RunFilter struct {
+	Repo   string
+	State  string
+	Limit  int
+	Offset int
+}
+
+// RunSummary is a lightweight run view for list pages.
+type RunSummary struct {
+	ID        string         `json:"id"`
+	RepoID    string         `json:"repo_id"`
+	Ref       string         `json:"ref"`
+	CommitSHA string         `json:"commit_sha"`
+	State     state.RunState `json:"state"`
+	JobCount  int            `json:"job_count"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+// SystemStats provides aggregate metrics for the dashboard.
+type SystemStats struct {
+	Total     int `json:"total"`
+	Running   int `json:"running"`
+	Queued    int `json:"queued"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	Canceled  int `json:"canceled"`
 }

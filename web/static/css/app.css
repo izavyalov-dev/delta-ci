@@ -1,0 +1,224 @@
+/* Delta CI custom styles */
+
+/* State badges */
+.badge {
+    display: inline-block;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    font-size: 0.8em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.badge-success { background: #2d6a4f; color: #d8f3dc; }
+.badge-failed { background: #9d0208; color: #ffd7d7; }
+.badge-running { background: #0077b6; color: #caf0f8; }
+.badge-queued { background: #6c757d; color: #e9ecef; }
+.badge-canceled { background: #495057; color: #dee2e6; }
+.badge-planning { background: #7b2cbf; color: #e0aaff; }
+.badge-created { background: #adb5bd; color: #212529; }
+.badge-timeout { background: #e76f51; color: #fff; }
+.badge-pending { background: #adb5bd; color: #212529; }
+
+/* Stats cards */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    text-align: center;
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--pico-muted-border-color);
+}
+
+.stat-card .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.stat-card .stat-label {
+    font-size: 0.85rem;
+    color: var(--pico-muted-color);
+    margin-top: 0.25rem;
+}
+
+/* Filter bar */
+.filter-bar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: end;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.filter-bar label {
+    margin-bottom: 0;
+}
+
+.filter-bar select,
+.filter-bar input {
+    margin-bottom: 0;
+}
+
+/* Run detail */
+.job-list {
+    list-style: none;
+    padding: 0;
+}
+
+.job-item {
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.job-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    background: var(--pico-card-background-color);
+}
+
+.job-header:hover {
+    filter: brightness(0.95);
+}
+
+.job-body {
+    padding: 1rem;
+    border-top: 1px solid var(--pico-muted-border-color);
+}
+
+/* AI advisory banner */
+.ai-advisory {
+    border: 2px solid #e9c46a;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+    position: relative;
+}
+
+.ai-advisory::before {
+    content: "AI-generated — advisory only";
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #e9c46a;
+    margin-bottom: 0.5rem;
+}
+
+/* Diff view */
+.diff-view {
+    font-family: monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-x: auto;
+    border-radius: 4px;
+    padding: 1rem;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+}
+
+.diff-add { color: #2d6a4f; background: rgba(45, 106, 79, 0.1); }
+.diff-del { color: #9d0208; background: rgba(157, 2, 8, 0.1); }
+.diff-hunk { color: #7b2cbf; font-weight: 600; }
+
+/* Flash messages */
+.flash {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.flash-success { background: rgba(45, 106, 79, 0.15); border: 1px solid #2d6a4f; }
+.flash-error { background: rgba(157, 2, 8, 0.15); border: 1px solid #9d0208; }
+
+/* Navigation */
+nav ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    gap: 1.5rem;
+}
+
+nav .brand {
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+/* Pagination */
+.pagination {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    align-items: center;
+    margin-top: 1rem;
+}
+
+.pagination a,
+.pagination span {
+    padding: 0.35em 0.75em;
+    border-radius: 4px;
+}
+
+.pagination .current {
+    background: var(--pico-primary-background);
+    color: var(--pico-primary-inverse);
+}
+
+/* Table tweaks */
+table {
+    width: 100%;
+}
+
+td, th {
+    white-space: nowrap;
+}
+
+td.wrap {
+    white-space: normal;
+}
+
+/* htmx indicator */
+.htmx-indicator {
+    opacity: 0;
+    transition: opacity 200ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    opacity: 1;
+}
+
+/* Mono text */
+.mono {
+    font-family: monospace;
+    font-size: 0.9em;
+}
+
+/* Truncate */
+.truncate {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Fix suggestion validation status badges */
+.badge-validation-pending { background: #adb5bd; color: #212529; }
+.badge-validation-queued { background: #6c757d; color: #e9ecef; }
+.badge-validation-running { background: #0077b6; color: #caf0f8; }
+.badge-validation-succeeded { background: #2d6a4f; color: #d8f3dc; }
+.badge-validation-failed { background: #9d0208; color: #ffd7d7; }
+.badge-validation-canceled { background: #495057; color: #dee2e6; }

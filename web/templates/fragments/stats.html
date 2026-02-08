@@ -1,0 +1,55 @@
+{{define "stats"}}<h2>Dashboard</h2>
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{.Stats.Total}}</div>
+        <div class="stat-label">Total Runs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.Stats.Running}}</div>
+        <div class="stat-label">Running</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.Stats.Queued}}</div>
+        <div class="stat-label">Queued</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.Stats.Succeeded}}</div>
+        <div class="stat-label">Succeeded</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.Stats.Failed}}</div>
+        <div class="stat-label">Failed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.Stats.Canceled}}</div>
+        <div class="stat-label">Canceled</div>
+    </div>
+</div>
+
+{{if .RecentRuns}}<h3>Recent Runs</h3>
+<table>
+    <thead><tr><th>ID</th><th>Repo</th><th>State</th><th>Commit</th><th>Jobs</th><th>Created</th></tr></thead>
+    <tbody>
+    {{range .RecentRuns}}<tr>
+        <td><a href="/runs/{{.ID}}">{{.ID}}</a></td>
+        <td>{{.RepoID}}</td>
+        <td>{{template "runBadge" .State}}</td>
+        <td class="mono">{{shortSHA .CommitSHA}}</td>
+        <td>{{.JobCount}}</td>
+        <td>{{timeAgo .CreatedAt}}</td>
+    </tr>{{end}}
+    </tbody>
+</table>{{end}}
+
+{{if .FailedRuns}}<h3>Recent Failures</h3>
+<table>
+    <thead><tr><th>ID</th><th>Repo</th><th>Commit</th><th>Created</th></tr></thead>
+    <tbody>
+    {{range .FailedRuns}}<tr>
+        <td><a href="/runs/{{.ID}}">{{.ID}}</a></td>
+        <td>{{.RepoID}}</td>
+        <td class="mono">{{shortSHA .CommitSHA}}</td>
+        <td>{{timeAgo .CreatedAt}}</td>
+    </tr>{{end}}
+    </tbody>
+</table>{{end}}{{end}}
