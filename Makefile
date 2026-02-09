@@ -4,6 +4,7 @@ DATABASE_URL ?= postgres://delta:delta@localhost:5432/delta_ci?sslmode=disable
 
 build:
 	go build -o bin/ ./cmd/...
+	go build -o bin/runner ./runner
 
 test:
 	go test ./...

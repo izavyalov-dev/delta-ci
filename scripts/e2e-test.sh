@@ -41,6 +41,9 @@ trap cleanup EXIT
 echo "=== Building orchestrator ==="
 (cd "$PROJECT_DIR" && go build -o bin/orchestrator ./cmd/orchestrator)
 
+echo "=== Building runner ==="
+(cd "$PROJECT_DIR" && go build -o bin/runner ./runner)
+
 echo "=== Starting orchestrator serve ==="
 DATABASE_URL="$DATABASE_URL" "$PROJECT_DIR/bin/orchestrator" serve \
   -listen "$LISTEN" \
