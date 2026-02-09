@@ -531,6 +531,7 @@ func findFiles(repoRoot, name string) ([]string, error) {
 	var matches []string
 	skipDirs := map[string]struct{}{
 		".git":         {},
+		".delta-ci":    {},
 		"node_modules": {},
 		"vendor":       {},
 		".cache":       {},
@@ -558,6 +559,7 @@ func findFilesByNames(repoRoot string, names map[string]struct{}) ([]string, err
 	var matches []string
 	skipDirs := map[string]struct{}{
 		".git":         {},
+		".delta-ci":    {},
 		"node_modules": {},
 		"vendor":       {},
 		".cache":       {},
