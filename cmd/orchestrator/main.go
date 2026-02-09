@@ -8,13 +8,18 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -182,6 +187,11 @@ func runServe(args []string) error {
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
 	webEnabled := flags.Bool("web-enabled", !envBool("DELTA_WEB_DISABLED"), "Enable web dashboard")
 	webDev := flags.Bool("web-dev", envBool("DELTA_WEB_DEV"), "Serve templates from disk for hot-reload")
+	pprofEnabled := flags.Bool("pprof-enabled", false, "Enable pprof profiling endpoints")
+	pprofListen := flags.String("pprof-listen", ":6060", "Listen address for pprof server")
+	dbMaxOpenConns := flags.Int("db-max-open-conns", 10, "Maximum open database connections")
+	dbMaxIdleConns := flags.Int("db-max-idle-conns", 5, "Maximum idle database connections")
+	dbConnMaxLifetime := flags.Duration("db-conn-max-lifetime", 30*time.Minute, "Maximum connection lifetime")
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
@@ -190,7 +200,11 @@ func runServe(args []string) error {
 	}
 
 	ctx := context.Background()
-	db, err := openDB(ctx, *databaseURL)
+	db, err := openDBWithConfig(ctx, *databaseURL, dbPoolConfig{
+		MaxOpenConns:    *dbMaxOpenConns,
+		MaxIdleConns:    *dbMaxIdleConns,
+		ConnMaxLifetime: *dbConnMaxLifetime,
+	})
 	if err != nil {
 		return err
 	}
@@ -199,6 +213,12 @@ func runServe(args []string) error {
 	store := state.NewStore(db)
 	if err := store.ApplyMigrations(ctx); err != nil {
 		return err
+	}
+
+	logger := observability.NewLogger("orchestrator")
+
+	if *pprofEnabled {
+		startPprofServer(*pprofListen, logger)
 	}
 
 	reporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
@@ -434,8 +454,17 @@ func runWorker(args []string) error {
 	s3Prefix := flags.String("s3-prefix", "", "S3 key prefix for log uploads")
 	s3Region := flags.String("s3-region", "", "S3 region for log uploads")
 	visibilityTimeout := flags.Duration("visibility-timeout", 30*time.Second, "Queue visibility timeout")
-	pollInterval := flags.Duration("poll-interval", 2*time.Second, "Delay between empty queue polls")
+	pollInterval := flags.Duration("poll-interval", 2*time.Second, "Base delay between empty queue polls")
+	maxPollInterval := flags.Duration("max-poll-interval", 30*time.Second, "Maximum poll interval for adaptive backoff")
 	continueOnRunnerError := flags.Bool("continue-on-runner-error", true, "Keep worker running after a runner error")
+	maxConcurrency := flags.Int("max-concurrency", 4, "Maximum number of concurrent jobs")
+	shutdownTimeout := flags.Duration("shutdown-timeout", 60*time.Second, "Maximum wait for in-flight jobs on shutdown")
+	maxDeliveryCount := flags.Int("max-delivery-count", 5, "Maximum delivery attempts before dead-lettering")
+	pprofEnabled := flags.Bool("pprof-enabled", false, "Enable pprof profiling endpoints")
+	pprofListen := flags.String("pprof-listen", ":6060", "Listen address for pprof server")
+	dbMaxOpenConns := flags.Int("db-max-open-conns", 10, "Maximum open database connections")
+	dbMaxIdleConns := flags.Int("db-max-idle-conns", 5, "Maximum idle database connections")
+	dbConnMaxLifetime := flags.Duration("db-conn-max-lifetime", 30*time.Minute, "Maximum connection lifetime")
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
@@ -448,9 +477,18 @@ func runWorker(args []string) error {
 	if *runnerID == "" {
 		return errors.New("runner-id required")
 	}
+	if *maxConcurrency < 1 {
+		return errors.New("max-concurrency must be >= 1")
+	}
 
-	ctx := context.Background()
-	db, err := openDB(ctx, *databaseURL)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	db, err := openDBWithConfig(ctx, *databaseURL, dbPoolConfig{
+		MaxOpenConns:    *dbMaxOpenConns,
+		MaxIdleConns:    *dbMaxIdleConns,
+		ConnMaxLifetime: *dbConnMaxLifetime,
+	})
 	if err != nil {
 		return err
 	}
@@ -461,12 +499,14 @@ func runWorker(args []string) error {
 		return err
 	}
 
+	metrics := observability.NewMetrics(nil)
+
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
 	analyzer, err := buildFailureAnalyzer(store, aiSettings)
 	if err != nil {
 		return err
 	}
-	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, analyzer)
+	service := orchestrator.NewServiceWithMetrics(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, analyzer, metrics)
 	logger := observability.NewLogger("worker")
 
 	if err := os.MkdirAll(*logDir, 0o755); err != nil {
@@ -478,52 +518,136 @@ func runWorker(args []string) error {
 		return err
 	}
 
-	logger.Info("worker started", "event", "worker_started", "orchestrator_url", *orchestratorURL)
+	if *pprofEnabled {
+		startPprofServer(*pprofListen, logger)
+	}
+
+	// Start dead letter sweeper.
+	dlStop := startDeadLetterSweeper(store, logger, 30*time.Second, *maxDeliveryCount)
+	defer close(dlStop)
+
+	// Start gauge collector for queue depth and active leases.
+	gaugeStop := startGaugeCollector(store, metrics, logger, 15*time.Second)
+	defer close(gaugeStop)
+
+	logger.Info("worker started",
+		"event", "worker_started",
+		"orchestrator_url", *orchestratorURL,
+		"max_concurrency", *maxConcurrency,
+		"max_delivery_count", *maxDeliveryCount,
+	)
+
+	sem := make(chan struct{}, *maxConcurrency)
+	var wg sync.WaitGroup
+	consecutiveEmpty := 0
 
 	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("shutdown signal received, waiting for in-flight jobs", "event", "worker_shutting_down")
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				logger.Info("all in-flight jobs completed", "event", "worker_shutdown_clean")
+			case <-time.After(*shutdownTimeout):
+				logger.Warn("shutdown timeout exceeded, exiting", "event", "worker_shutdown_timeout")
+			}
+			return nil
+		case sem <- struct{}{}:
+			// Acquired a concurrency slot.
+		}
+
 		attemptID, err := service.DequeueJobAttempt(ctx, *visibilityTimeout)
 		if err != nil {
+			<-sem // release slot
 			if errors.Is(err, state.ErrQueueEmpty) {
-				time.Sleep(*pollInterval)
+				consecutiveEmpty++
+				backoff := adaptivePollInterval(*pollInterval, *maxPollInterval, consecutiveEmpty)
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+				}
 				continue
+			}
+			if ctx.Err() != nil {
+				continue // will hit shutdown path above
 			}
 			return err
 		}
+		consecutiveEmpty = 0
+		metrics.SetWorkerActive(1)
 
-		lease, err := service.GrantLease(ctx, orchestrator.GrantLeaseRequest{
-			AttemptID:        attemptID,
-			RunnerID:         *runnerID,
-			TTLSeconds:       120,
-			HeartbeatSeconds: 30,
-		})
-		if err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func(attemptID string) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		leasePath := filepath.Join(leaseDir, attemptID+".json")
-		if err := writeLeaseFile(leasePath, lease); err != nil {
-			return err
-		}
-
-		logPath := filepath.Join(*logDir, attemptID+".log")
-		if err := runRunner(ctx, *runnerCmd, *orchestratorURL, *runnerID, leasePath, *workdir, logPath, *s3Bucket, *s3Prefix, *s3Region); err != nil {
-			logger.Warn("runner exited with error", "event", "runner_failed", "error", err)
-			if *continueOnRunnerError {
-				continue
+			lease, err := service.GrantLease(ctx, orchestrator.GrantLeaseRequest{
+				AttemptID:        attemptID,
+				RunnerID:         *runnerID,
+				TTLSeconds:       120,
+				HeartbeatSeconds: 30,
+			})
+			if err != nil {
+				logger.Error("grant lease failed", "event", "grant_lease_failed", "attempt_id", attemptID, "error", err)
+				return
 			}
-			return err
-		}
+
+			leasePath := filepath.Join(leaseDir, attemptID+".json")
+			if err := writeLeaseFile(leasePath, lease); err != nil {
+				logger.Error("write lease file failed", "event", "write_lease_failed", "attempt_id", attemptID, "error", err)
+				return
+			}
+
+			logPath := filepath.Join(*logDir, attemptID+".log")
+			if err := runRunner(ctx, *runnerCmd, *orchestratorURL, *runnerID, leasePath, *workdir, logPath, *s3Bucket, *s3Prefix, *s3Region); err != nil {
+				logger.Warn("runner exited with error", "event", "runner_failed", "attempt_id", attemptID, "error", err)
+				if !*continueOnRunnerError {
+					stop() // trigger shutdown
+				}
+			}
+		}(attemptID)
 	}
 }
 
+type dbPoolConfig struct {
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
+
 func openDB(ctx context.Context, databaseURL string) (*sql.DB, error) {
+	return openDBWithConfig(ctx, databaseURL, dbPoolConfig{
+		MaxOpenConns:    10,
+		MaxIdleConns:    5,
+		ConnMaxLifetime: 30 * time.Minute,
+	})
+}
+
+func openDBWithConfig(ctx context.Context, databaseURL string, cfg dbPoolConfig) (*sql.DB, error) {
 	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, err
 	}
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
+	if cfg.ConnMaxLifetime > 0 {
+		db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+	} else {
+		db.SetConnMaxLifetime(30 * time.Minute)
+	}
+	if cfg.MaxOpenConns > 0 {
+		db.SetMaxOpenConns(cfg.MaxOpenConns)
+	} else {
+		db.SetMaxOpenConns(10)
+	}
+	if cfg.MaxIdleConns > 0 {
+		db.SetMaxIdleConns(cfg.MaxIdleConns)
+	} else {
+		db.SetMaxIdleConns(5)
+	}
 
 	if err := db.PingContext(ctx); err != nil {
 		return nil, err
@@ -616,4 +740,87 @@ func isTerminalRun(runState state.RunState) bool {
 	default:
 		return false
 	}
+}
+
+func adaptivePollInterval(base, max time.Duration, consecutiveEmpty int) time.Duration {
+	if consecutiveEmpty <= 1 {
+		return base
+	}
+	multiplier := math.Pow(2, float64(consecutiveEmpty-1))
+	interval := time.Duration(float64(base) * multiplier)
+	if interval > max {
+		return max
+	}
+	return interval
+}
+
+func startPprofServer(listen string, logger *slog.Logger) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	srv := &http.Server{
+		Addr:              listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		logger.Info("pprof server started", "event", "pprof_started", "listen", listen)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprof server failed", "event", "pprof_failed", "error", err)
+		}
+	}()
+}
+
+func startDeadLetterSweeper(store *state.Store, logger *slog.Logger, interval time.Duration, maxDeliveries int) chan struct{} {
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				count, err := store.DeadLetterExpired(context.Background(), maxDeliveries, 50)
+				if err != nil {
+					logger.Error("dead letter sweep failed", "event", "dead_letter_sweep_failed", "error", err)
+				} else if count > 0 {
+					logger.Info("dead letter sweep completed", "event", "dead_letter_sweep_completed", "count", count)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return stop
+}
+
+func startGaugeCollector(store *state.Store, metrics *observability.Metrics, logger *slog.Logger, interval time.Duration) chan struct{} {
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ctx := context.Background()
+				depth, err := store.QueueDepth(ctx)
+				if err != nil {
+					logger.Error("queue depth query failed", "event", "gauge_query_failed", "error", err)
+				} else {
+					metrics.SetQueueDepth(float64(depth))
+				}
+				active, err := store.ActiveLeaseCount(ctx)
+				if err != nil {
+					logger.Error("active lease count query failed", "event", "gauge_query_failed", "error", err)
+				} else {
+					metrics.SetActiveLeases(float64(active))
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return stop
 }

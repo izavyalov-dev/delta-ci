@@ -43,6 +43,11 @@ type plannedJobRecord struct {
 
 // NewService constructs an orchestrator service with sensible defaults.
 func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator, reporter StatusReporter, analyzer FailureAnalyzer) *Service {
+	return NewServiceWithMetrics(store, plan, dispatcher, ids, reporter, analyzer, nil)
+}
+
+// NewServiceWithMetrics constructs a service with an externally provided metrics instance.
+func NewServiceWithMetrics(store *state.Store, plan planner.Planner, dispatcher Dispatcher, ids IDGenerator, reporter StatusReporter, analyzer FailureAnalyzer, metrics *observability.Metrics) *Service {
 	if plan == nil {
 		plan = planner.StaticPlanner{}
 	}
@@ -59,7 +64,9 @@ func NewService(store *state.Store, plan planner.Planner, dispatcher Dispatcher,
 		analyzer = NewRuleBasedFailureAnalyzer()
 	}
 	logger := observability.NewLogger("orchestrator")
-	metrics := observability.NewMetrics(nil)
+	if metrics == nil {
+		metrics = observability.NewMetrics(nil)
+	}
 	return &Service{
 		store:      store,
 		planner:    plan,

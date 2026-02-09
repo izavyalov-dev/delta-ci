@@ -33,6 +33,12 @@ DO UPDATE SET available_at = EXCLUDED.available_at,
 
 // DequeueJobAttempt returns the next available attempt ID and bumps its visibility window.
 func (s *Store) DequeueJobAttempt(ctx context.Context, now time.Time, visibilityTimeout time.Duration) (string, error) {
+	return s.DequeueJobAttemptWithMaxDelivery(ctx, now, visibilityTimeout, 0)
+}
+
+// DequeueJobAttemptWithMaxDelivery is like DequeueJobAttempt but skips items
+// that have exceeded maxDeliveries. A maxDeliveries of 0 means no limit.
+func (s *Store) DequeueJobAttemptWithMaxDelivery(ctx context.Context, now time.Time, visibilityTimeout time.Duration, maxDeliveries int) (string, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -54,6 +60,11 @@ WHERE q.attempt_id = a.id
 		return "", err
 	}
 
+	deliveryFilter := ""
+	if maxDeliveries > 0 {
+		deliveryFilter = fmt.Sprintf(" AND q.delivery_count < %d", maxDeliveries)
+	}
+
 	var attemptID string
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
@@ -66,6 +77,7 @@ WHERE q.available_at <= $1
   AND (q.inflight_until IS NULL OR q.inflight_until <= $1)
   AND a.state = 'QUEUED'
   AND r.state NOT IN ('SUCCESS', 'FAILED', 'CANCELED', 'TIMEOUT', 'REPORTED', 'PLAN_FAILED', 'CANCEL_REQUESTED')
+`+deliveryFilter+`
 ORDER BY q.available_at ASC, q.attempt_id ASC
 FOR UPDATE SKIP LOCKED
 LIMIT 1
@@ -96,6 +108,14 @@ WHERE attempt_id = $1
 		return "", err
 	}
 	return attemptID, nil
+}
+
+// SetQueueDeliveryCount sets the delivery_count for a queue item. Used in testing.
+func (s *Store) SetQueueDeliveryCount(ctx context.Context, attemptID string, count int) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE job_queue SET delivery_count = $2, updated_at = NOW() WHERE attempt_id = $1
+`, attemptID, count)
+	return err
 }
 
 // AckJobAttemptDispatch removes a job attempt from the dispatch queue.
