@@ -55,10 +55,10 @@ func NewAppClient(provider TokenProvider) *Client {
 
 // CheckRunRequest describes a check run payload.
 type CheckRunRequest struct {
-	Name        string    `json:"name"`
-	HeadSHA     string    `json:"head_sha"`
-	Status      string    `json:"status,omitempty"`
-	Conclusion  string    `json:"conclusion,omitempty"`
+	Name        string     `json:"name"`
+	HeadSHA     string     `json:"head_sha"`
+	Status      string     `json:"status,omitempty"`
+	Conclusion  string     `json:"conclusion,omitempty"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	Output      struct {
