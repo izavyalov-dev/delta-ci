@@ -45,7 +45,7 @@ func testService(t *testing.T) (*orchestrator.Service, *state.Store) {
 		t.Fatal(err)
 	}
 
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store), nil)
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, nil)
 	return service, store
 }

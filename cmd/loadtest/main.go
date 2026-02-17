@@ -58,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store), nil)
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, nil)
 
 	logger.Info("creating runs", "runs", *runs, "jobs_per_run", *jobsPerRun)

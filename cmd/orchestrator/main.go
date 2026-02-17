@@ -66,6 +66,34 @@ func usage() {
 	fmt.Println("Usage: orchestrator <serve|dogfood|worker> [flags]")
 }
 
+// stringSliceFlag implements flag.Value for repeatable string flags.
+type stringSliceFlag []string
+
+func (f *stringSliceFlag) String() string { return strings.Join(*f, ",") }
+func (f *stringSliceFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
+func buildPluginRegistry(extraPaths []string) *planner.PluginRegistry {
+	plugins := []planner.LanguagePlugin{planner.GoLanguagePlugin{}}
+	for _, path := range extraPaths {
+		name := filepath.Base(path)
+		name = strings.TrimPrefix(name, "delta-ci-lang-")
+		if name == "" || name == path {
+			name = filepath.Base(path)
+		}
+		plugins = append(plugins, &planner.ExternalLanguagePlugin{
+			PluginName: name,
+			Path:       path,
+		})
+	}
+	for _, ep := range planner.DiscoverExternalPlugins() {
+		plugins = append(plugins, ep)
+	}
+	return planner.NewPluginRegistry(plugins...)
+}
+
 type aiSettings struct {
 	Enabled        bool
 	Provider       string
@@ -248,6 +276,8 @@ func runServe(args []string) error {
 	dbMaxOpenConns := flags.Int("db-max-open-conns", 10, "Maximum open database connections")
 	dbMaxIdleConns := flags.Int("db-max-idle-conns", 5, "Maximum idle database connections")
 	dbConnMaxLifetime := flags.Duration("db-conn-max-lifetime", 30*time.Minute, "Maximum connection lifetime")
+	var langPlugins stringSliceFlag
+	flags.Var(&langPlugins, "language-plugin", "Path to external language plugin (repeatable)")
 	notifySettings := addNotifyFlags(flags)
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
@@ -287,7 +317,8 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
+	registry := buildPluginRegistry(langPlugins)
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store), registry)
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer)
 	apiHandler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
 		GitHubWebhookSecret: *githubWebhookSecret,
@@ -343,6 +374,8 @@ func runDogfood(args []string) error {
 	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
+	var dogfoodLangPlugins stringSliceFlag
+	flags.Var(&dogfoodLangPlugins, "language-plugin", "Path to external language plugin (repeatable)")
 	notifySettings := addNotifyFlags(flags)
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
@@ -372,7 +405,8 @@ func runDogfood(args []string) error {
 	if err != nil {
 		return err
 	}
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
+	dogfoodRegistry := buildPluginRegistry(dogfoodLangPlugins)
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store), dogfoodRegistry)
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer)
 	handler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{})
 
@@ -525,6 +559,8 @@ func runWorker(args []string) error {
 	dbMaxOpenConns := flags.Int("db-max-open-conns", 10, "Maximum open database connections")
 	dbMaxIdleConns := flags.Int("db-max-idle-conns", 5, "Maximum idle database connections")
 	dbConnMaxLifetime := flags.Duration("db-conn-max-lifetime", 30*time.Minute, "Maximum connection lifetime")
+	var workerLangPlugins stringSliceFlag
+	flags.Var(&workerLangPlugins, "language-plugin", "Path to external language plugin (repeatable)")
 	notifySettings := addNotifyFlags(flags)
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
@@ -563,7 +599,8 @@ func runWorker(args []string) error {
 	metrics := observability.NewMetrics(nil)
 
 	reporter := buildReporter(store, nil, notifySettings)
-	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
+	workerRegistry := buildPluginRegistry(workerLangPlugins)
+	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store), workerRegistry)
 	analyzer, err := buildFailureAnalyzer(store, aiSettings)
 	if err != nil {
 		return err

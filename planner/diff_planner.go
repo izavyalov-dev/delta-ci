@@ -26,17 +26,23 @@ type DiffPlanner struct {
 	RepoRoot string
 	Fallback Planner
 	Recipes  RecipeStore
+	Plugins  *PluginRegistry
 }
 
 // NewDiffPlanner constructs a diff-aware planner with a fallback.
-func NewDiffPlanner(repoRoot string, fallback Planner, recipes RecipeStore) DiffPlanner {
+// If plugins is nil, a default registry containing GoLanguagePlugin is used.
+func NewDiffPlanner(repoRoot string, fallback Planner, recipes RecipeStore, plugins *PluginRegistry) DiffPlanner {
 	if fallback == nil {
 		fallback = StaticPlanner{}
+	}
+	if plugins == nil {
+		plugins = NewPluginRegistry(GoLanguagePlugin{})
 	}
 	return DiffPlanner{
 		RepoRoot: repoRoot,
 		Fallback: fallback,
 		Recipes:  recipes,
+		Plugins:  plugins,
 	}
 }
 
@@ -51,9 +57,13 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 		return result, nil
 	}
 
-	discovery := discoverInputs(root)
+	// Detect which language plugins apply.
+	detected := p.Plugins.DetectAll(ctx, root)
+
+	// Run discovery for each detected plugin and merge into discoveryInputs.
+	discovery := discoverInputsWithPlugins(ctx, root, detected)
 	fingerprint, fingerprintErr := computeRepoFingerprint(root)
-	hasGo := len(discovery.projects) > 0 || discovery.hasFile("go.mod") || discovery.hasFile("go.sum") || discovery.hasFile("go.work") || discovery.hasFile("go.work.sum")
+	hasLanguage := len(discovery.projects) > 0 || len(detected) > 0
 	cacheReadOnly := isPullRequestRef(req.Ref)
 
 	if discovery.hasFile("ci.ai.yaml") {
@@ -65,7 +75,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 		return result, nil
 	}
 
-	if !hasGo {
+	if !hasLanguage {
 		result, planErr := p.fallbackPlan(ctx, req, "no supported build files detected", nil)
 		if planErr != nil {
 			return PlanResult{}, planErr
@@ -100,10 +110,11 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 		return result, nil
 	}
 
-	impact := analyzeImpact(paths, discovery.projects, discovery.dependencyUnknown)
+	impact := analyzeImpactWithExtensions(paths, discovery.projects, discovery.dependencyUnknown, discovery.codeExtensions, discovery.globalFiles)
 	explain := buildExplain(discovery, impact)
 
-	result := planForGo(impact, explain, discovery.projects, root, cacheReadOnly)
+	// Dispatch to each detected plugin's Plan method and merge results.
+	result := planWithPlugins(ctx, detected, impact, explain, discovery.projects, root, cacheReadOnly)
 	applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceDiscovery, recipeNote)
 	return result, nil
 }
@@ -163,14 +174,12 @@ type discoveryInputs struct {
 	files             map[string]struct{}
 	projects          []project
 	dependencyUnknown bool
+	codeExtensions    map[string]struct{}
+	globalFiles       map[string]struct{}
 }
 
-func discoverInputs(repoRoot string) discoveryInputs {
+func discoverInputsWithPlugins(ctx context.Context, repoRoot string, plugins []LanguagePlugin) discoveryInputs {
 	candidates := []string{
-		"go.mod",
-		"go.sum",
-		"go.work",
-		"go.work.sum",
 		"package.json",
 		"Makefile",
 		"README.md",
@@ -186,12 +195,47 @@ func discoverInputs(repoRoot string) discoveryInputs {
 		}
 	}
 
-	projectDiscovery := discoverGoProjects(repoRoot)
+	codeExts := make(map[string]struct{})
+	globalFiles := make(map[string]struct{})
+	var allProjects []project
+	dependencyUnknown := false
+
+	for _, plugin := range plugins {
+		result, err := plugin.Discover(ctx, repoRoot)
+		if err != nil {
+			dependencyUnknown = true
+			continue
+		}
+		allProjects = append(allProjects, result.Projects...)
+		if result.DependencyUnknown {
+			dependencyUnknown = true
+		}
+		for _, ext := range result.CodeExtensions {
+			codeExts[ext] = struct{}{}
+		}
+		for _, gf := range result.GlobalFiles {
+			globalFiles[gf] = struct{}{}
+			// Also check if these global files exist in the repo.
+			path := filepath.Join(repoRoot, gf)
+			if _, err := os.Stat(path); err == nil {
+				found[gf] = struct{}{}
+			}
+		}
+	}
+
 	return discoveryInputs{
 		files:             found,
-		projects:          projectDiscovery.projects,
-		dependencyUnknown: projectDiscovery.dependencyUnknown,
+		projects:          allProjects,
+		dependencyUnknown: dependencyUnknown,
+		codeExtensions:    codeExts,
+		globalFiles:       globalFiles,
 	}
+}
+
+// discoverInputs is the legacy discovery function (no plugins).
+// Retained for backward compatibility with planFromRecipe and other callers.
+func discoverInputs(repoRoot string) discoveryInputs {
+	return discoverInputsWithPlugins(context.Background(), repoRoot, []LanguagePlugin{GoLanguagePlugin{}})
 }
 
 func (d discoveryInputs) hasFile(name string) bool {
@@ -625,6 +669,10 @@ type impactSummary struct {
 }
 
 func analyzeImpact(paths []string, projects []project, dependencyUnknown bool) impactSummary {
+	return analyzeImpactWithExtensions(paths, projects, dependencyUnknown, nil, nil)
+}
+
+func analyzeImpactWithExtensions(paths []string, projects []project, dependencyUnknown bool, codeExtensions map[string]struct{}, globalFiles map[string]struct{}) impactSummary {
 	paths = append([]string(nil), paths...)
 	sort.Strings(paths)
 
@@ -641,10 +689,10 @@ func analyzeImpact(paths []string, projects []project, dependencyUnknown bool) i
 		if !isDocsPath(path) {
 			docsOnly = false
 		}
-		if isGlobalImpact(path) {
+		if isGlobalImpactExt(path, globalFiles) {
 			global = true
 		}
-		if isCodePath(path) {
+		if isCodePathExt(path, codeExtensions) {
 			code = true
 		}
 
@@ -742,6 +790,56 @@ func planForGo(impact impactSummary, explain string, projects []project, repoRoo
 		Jobs:        jobs,
 		Explain:     explain,
 		SkippedJobs: skipped,
+	}
+}
+
+// planWithPlugins dispatches to each detected plugin and merges results.
+// If a plugin's Plan fails, we fall back to running all projects (conservative).
+func planWithPlugins(ctx context.Context, plugins []LanguagePlugin, impact impactSummary, explain string, projects []project, repoRoot string, cacheReadOnly bool) PlanResult {
+	var allJobs []PlannedJob
+	var allSkipped []SkippedJob
+
+	for _, plugin := range plugins {
+		// Filter projects belonging to this plugin's language.
+		var pluginProjects []project
+		for _, p := range projects {
+			if p.Language == plugin.Name() {
+				pluginProjects = append(pluginProjects, p)
+			}
+		}
+		if len(pluginProjects) == 0 {
+			continue
+		}
+
+		result, err := plugin.Plan(ctx, PluginPlanRequest{
+			RepoRoot:      repoRoot,
+			Impact:        impact,
+			Explain:       explain,
+			Projects:      pluginProjects,
+			CacheReadOnly: cacheReadOnly,
+		})
+		if err != nil {
+			// Plugin failure: conservative fallback — plan all projects for this plugin.
+			fallbackImpact := impact
+			fallbackImpact.Global = true
+			fallbackImpact.ImpactedProjects = projectNames(pluginProjects)
+			result, _ = plugin.Plan(ctx, PluginPlanRequest{
+				RepoRoot:      repoRoot,
+				Impact:        fallbackImpact,
+				Explain:       explain + "; plugin error fallback",
+				Projects:      pluginProjects,
+				CacheReadOnly: cacheReadOnly,
+			})
+		}
+
+		allJobs = append(allJobs, result.Jobs...)
+		allSkipped = append(allSkipped, result.SkippedJobs...)
+	}
+
+	return PlanResult{
+		Jobs:        allJobs,
+		Explain:     explain,
+		SkippedJobs: allSkipped,
 	}
 }
 
@@ -960,23 +1058,39 @@ func isDocsPath(path string) bool {
 }
 
 func isGlobalImpact(path string) bool {
+	return isGlobalImpactExt(path, nil)
+}
+
+func isGlobalImpactExt(path string, pluginGlobals map[string]struct{}) bool {
 	lower := strings.ToLower(path)
+
+	// Language-agnostic globals (always checked).
 	switch {
 	case strings.HasPrefix(lower, ".github/"):
 		return true
 	case lower == "ci.ai.yaml":
 		return true
-	case lower == "go.mod", lower == "go.sum":
-		return true
-	case lower == "go.work", lower == "go.work.sum":
-		return true
 	case lower == "makefile":
 		return true
 	case lower == "dockerfile":
 		return true
-	default:
+	}
+
+	// Plugin-contributed global files.
+	if len(pluginGlobals) > 0 {
+		base := filepath.Base(path)
+		if _, ok := pluginGlobals[base]; ok {
+			return true
+		}
 		return false
 	}
+
+	// Legacy fallback when no plugin globals provided.
+	switch lower {
+	case "go.mod", "go.sum", "go.work", "go.work.sum":
+		return true
+	}
+	return false
 }
 
 func isPullRequestRef(ref string) bool {
@@ -1063,7 +1177,19 @@ func isRootProject(projectName, root string) bool {
 }
 
 func isCodePath(path string) bool {
+	return isCodePathExt(path, nil)
+}
+
+func isCodePathExt(path string, pluginExtensions map[string]struct{}) bool {
 	lower := strings.ToLower(path)
+
+	if len(pluginExtensions) > 0 {
+		ext := filepath.Ext(lower)
+		_, ok := pluginExtensions[ext]
+		return ok
+	}
+
+	// Legacy fallback when no plugin extensions provided.
 	return strings.HasSuffix(lower, ".go") || strings.HasSuffix(lower, ".mod") || strings.HasSuffix(lower, ".sum")
 }
 
