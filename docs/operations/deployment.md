@@ -150,9 +150,72 @@ Recommended rollout approach:
 
 ---
 
+## Docker Deployment
+
+Delta CI provides multi-stage Dockerfiles for all components:
+
+- `Dockerfile.orchestrator` — orchestrator binary (serve, worker, dogfood modes)
+- `Dockerfile.runner` — runner binary
+- `Dockerfile.ai-proxy` — AI proxy binary
+
+All images use `gcr.io/distroless/static:nonroot` as the runtime base for minimal attack surface.
+
+### Quick Start
+
+Build and start the full stack with Docker Compose:
+
+```bash
+# Build all images and start services
+make docker-up
+
+# Or step by step:
+docker compose build
+docker compose up -d
+```
+
+This starts PostgreSQL, the orchestrator API server, and a worker. The API is available at `http://localhost:8080`.
+
+### Individual Builds
+
+```bash
+docker build -f Dockerfile.orchestrator -t delta-ci/orchestrator .
+docker build -f Dockerfile.runner -t delta-ci/runner .
+docker build -f Dockerfile.ai-proxy -t delta-ci/ai-proxy .
+```
+
+### Running the Orchestrator
+
+The orchestrator binary supports three modes via the first argument:
+
+```bash
+# API server
+docker run -e DATABASE_URL=... delta-ci/orchestrator serve --listen :8080
+
+# Background worker
+docker run -e DATABASE_URL=... delta-ci/orchestrator worker --orchestrator-url http://orchestrator:8080
+
+# Local dogfood
+docker run -e DATABASE_URL=... delta-ci/orchestrator dogfood
+```
+
+### Environment Variables
+
+All CLI flags can also be set via environment variables. Key variables:
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `GITHUB_TOKEN` | GitHub API token for status checks |
+| `GITHUB_WEBHOOK_SECRET` | Webhook signature verification |
+| `DELTA_NOTIFY_WEBHOOK_URL` | Generic webhook notification URL |
+| `DELTA_NOTIFY_SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
+
+See [notifications.md](notifications.md) for notification configuration.
+
+---
+
 ## Future Work
 
 Planned additions:
 - Helm chart for Kubernetes deployments
 - hardened runner templates (container + VM)
-- official Docker Compose for local development

@@ -9,6 +9,44 @@ services:
       - "${PGPORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delta -d delta_ci"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  orchestrator-serve:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    command: ["serve", "--listen", ":8080"]
+    environment:
+      DATABASE_URL: "postgres://delta:delta@postgres:5432/delta_ci?sslmode=disable"
+    ports:
+      - "${ORCHESTRATOR_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  orchestrator-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    command: ["worker", "--orchestrator-url", "http://orchestrator-serve:8080", "--runner-cmd", "/usr/local/bin/runner"]
+    environment:
+      DATABASE_URL: "postgres://delta:delta@postgres:5432/delta_ci?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      orchestrator-serve:
+        condition: service_started
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    # Runner is launched by the worker; this service validates the image builds.
+    entrypoint: ["echo", "runner image ready"]
 
 volumes:
   pgdata:

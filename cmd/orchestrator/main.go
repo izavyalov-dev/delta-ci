@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/izavyalov-dev/delta-ci/internal/notify"
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
 	"github.com/izavyalov-dev/delta-ci/internal/vcs/github"
 	"github.com/izavyalov-dev/delta-ci/orchestrator"
@@ -137,6 +138,61 @@ func buildFailureAnalyzer(store *state.Store, settings *aiSettings) (orchestrato
 	return analyzer, nil
 }
 
+type notifySettings struct {
+	WebhookURL    string
+	WebhookSecret string
+	WebhookEvents string
+	SlackURL      string
+	SlackEvents   string
+	DashboardURL  string
+}
+
+func addNotifyFlags(flags *flag.FlagSet) *notifySettings {
+	s := &notifySettings{
+		WebhookURL:    os.Getenv("DELTA_NOTIFY_WEBHOOK_URL"),
+		WebhookSecret: os.Getenv("DELTA_NOTIFY_WEBHOOK_SECRET"),
+		WebhookEvents: os.Getenv("DELTA_NOTIFY_WEBHOOK_EVENTS"),
+		SlackURL:      os.Getenv("DELTA_NOTIFY_SLACK_WEBHOOK_URL"),
+		SlackEvents:   os.Getenv("DELTA_NOTIFY_SLACK_EVENTS"),
+		DashboardURL:  os.Getenv("DELTA_DASHBOARD_URL"),
+	}
+	flags.StringVar(&s.WebhookURL, "notify-webhook-url", s.WebhookURL, "Webhook URL for run notifications")
+	flags.StringVar(&s.WebhookSecret, "notify-webhook-secret", s.WebhookSecret, "HMAC-SHA256 signing secret for webhook")
+	flags.StringVar(&s.WebhookEvents, "notify-webhook-events", s.WebhookEvents, "Webhook event filter: all or terminal-only (default)")
+	flags.StringVar(&s.SlackURL, "notify-slack-webhook-url", s.SlackURL, "Slack incoming webhook URL")
+	flags.StringVar(&s.SlackEvents, "notify-slack-events", s.SlackEvents, "Slack event filter: all or terminal-only (default)")
+	flags.StringVar(&s.DashboardURL, "notify-dashboard-url", s.DashboardURL, "Dashboard base URL included in notifications")
+	return s
+}
+
+func buildReporter(store *state.Store, ghReporter orchestrator.StatusReporter, ns *notifySettings) orchestrator.StatusReporter {
+	reporters := []orchestrator.StatusReporter{ghReporter}
+
+	if ns.WebhookURL != "" {
+		reporters = append(reporters, notify.NewWebhookReporter(store, notify.WebhookConfig{
+			URL:    ns.WebhookURL,
+			Secret: ns.WebhookSecret,
+			Events: notify.EventFilter(ns.WebhookEvents),
+		}, observability.NewLogger("notify.webhook"), ns.DashboardURL))
+	}
+
+	if ns.SlackURL != "" {
+		reporters = append(reporters, notify.NewSlackReporter(store, notify.SlackConfig{
+			WebhookURL: ns.SlackURL,
+			Events:     notify.EventFilter(ns.SlackEvents),
+		}, observability.NewLogger("notify.slack"), ns.DashboardURL))
+	}
+
+	multi := notify.NewMultiReporter(reporters...)
+	if multi.Len() == 0 {
+		return orchestrator.NoopStatusReporter{}
+	}
+	if multi.Len() == 1 {
+		return ghReporter
+	}
+	return multi
+}
+
 func envBool(name string) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -192,6 +248,7 @@ func runServe(args []string) error {
 	dbMaxOpenConns := flags.Int("db-max-open-conns", 10, "Maximum open database connections")
 	dbMaxIdleConns := flags.Int("db-max-idle-conns", 5, "Maximum idle database connections")
 	dbConnMaxLifetime := flags.Duration("db-conn-max-lifetime", 30*time.Minute, "Maximum connection lifetime")
+	notifySettings := addNotifyFlags(flags)
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
@@ -221,10 +278,11 @@ func runServe(args []string) error {
 		startPprofServer(*pprofListen, logger)
 	}
 
-	reporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
+	ghReporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
 	if err != nil {
 		return err
 	}
+	reporter := buildReporter(store, ghReporter, notifySettings)
 	analyzer, err := buildFailureAnalyzer(store, aiSettings)
 	if err != nil {
 		return err
@@ -285,6 +343,7 @@ func runDogfood(args []string) error {
 	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
+	notifySettings := addNotifyFlags(flags)
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
@@ -304,10 +363,11 @@ func runDogfood(args []string) error {
 		return err
 	}
 
-	reporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
+	ghReporter, err := buildGitHubReporter(store, *githubToken, *githubAppID, *githubAppInstallationID, *githubAppPrivateKey, *githubAppPrivateKeyFile, *githubAPIURL, *githubCheckName)
 	if err != nil {
 		return err
 	}
+	reporter := buildReporter(store, ghReporter, notifySettings)
 	analyzer, err := buildFailureAnalyzer(store, aiSettings)
 	if err != nil {
 		return err
@@ -465,6 +525,7 @@ func runWorker(args []string) error {
 	dbMaxOpenConns := flags.Int("db-max-open-conns", 10, "Maximum open database connections")
 	dbMaxIdleConns := flags.Int("db-max-idle-conns", 5, "Maximum idle database connections")
 	dbConnMaxLifetime := flags.Duration("db-conn-max-lifetime", 30*time.Minute, "Maximum connection lifetime")
+	notifySettings := addNotifyFlags(flags)
 	aiSettings := addAIFlags(flags)
 	_ = flags.Parse(args)
 
@@ -501,12 +562,13 @@ func runWorker(args []string) error {
 
 	metrics := observability.NewMetrics(nil)
 
+	reporter := buildReporter(store, nil, notifySettings)
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store))
 	analyzer, err := buildFailureAnalyzer(store, aiSettings)
 	if err != nil {
 		return err
 	}
-	service := orchestrator.NewServiceWithMetrics(store, plan, orchestrator.NewQueueDispatcher(store), nil, nil, analyzer, metrics)
+	service := orchestrator.NewServiceWithMetrics(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer, metrics)
 	logger := observability.NewLogger("worker")
 
 	if err := os.MkdirAll(*logDir, 0o755); err != nil {

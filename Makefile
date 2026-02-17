@@ -1,4 +1,4 @@
-.PHONY: build test lint up down serve worker dogfood
+.PHONY: build test lint up down serve worker dogfood docker-build docker-up
 
 DATABASE_URL ?= postgres://delta:delta@localhost:5432/delta_ci?sslmode=disable
 
@@ -27,3 +27,9 @@ worker:
 
 dogfood:
 	DATABASE_URL=$(DATABASE_URL) go run ./cmd/orchestrator dogfood
+
+docker-build:
+	docker compose build
+
+docker-up: docker-build
+	docker compose up -d
