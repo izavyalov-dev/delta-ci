@@ -21,13 +21,14 @@ type PlanRequest struct {
 
 // PlanResult is the outcome of the planning step.
 type PlanResult struct {
-	Jobs          []PlannedJob
-	Explain       string
-	SkippedJobs   []SkippedJob
-	Fingerprint   string
-	RecipeSource  string
-	RecipeID      string
-	RecipeVersion int
+	Jobs            []PlannedJob
+	Explain         string
+	SkippedJobs     []SkippedJob
+	Fingerprint     string
+	RecipeSource    string
+	RecipeID        string
+	RecipeVersion   int
+	DetectedPlugins []string
 }
 
 // SkippedJob describes a planned job that was intentionally not scheduled.

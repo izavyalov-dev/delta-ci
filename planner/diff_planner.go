@@ -59,10 +59,14 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 
 	// Detect which language plugins apply.
 	detected := p.Plugins.DetectAll(ctx, root)
+	detectedNames := make([]string, 0, len(detected))
+	for _, dp := range detected {
+		detectedNames = append(detectedNames, dp.Name())
+	}
 
 	// Run discovery for each detected plugin and merge into discoveryInputs.
 	discovery := discoverInputsWithPlugins(ctx, root, detected)
-	fingerprint, fingerprintErr := computeRepoFingerprint(root)
+	fingerprint, fingerprintErr := computeRepoFingerprint(root, discovery.fingerprintFiles)
 	hasLanguage := len(discovery.projects) > 0 || len(detected) > 0
 	cacheReadOnly := isPullRequestRef(req.Ref)
 
@@ -72,6 +76,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 			return PlanResult{}, planErr
 		}
 		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceConfig, "")
+		result.DetectedPlugins = detectedNames
 		return result, nil
 	}
 
@@ -81,6 +86,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 			return PlanResult{}, planErr
 		}
 		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceFallback, "")
+		result.DetectedPlugins = detectedNames
 		return result, nil
 	}
 
@@ -89,6 +95,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 		return PlanResult{}, err
 	}
 	if recipeUsed {
+		recipeResult.DetectedPlugins = detectedNames
 		return recipeResult, nil
 	}
 
@@ -99,6 +106,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 			return PlanResult{}, planErr
 		}
 		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceFallback, recipeNote)
+		result.DetectedPlugins = detectedNames
 		return result, nil
 	}
 	if len(paths) == 0 {
@@ -107,6 +115,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 			return PlanResult{}, planErr
 		}
 		applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceFallback, recipeNote)
+		result.DetectedPlugins = detectedNames
 		return result, nil
 	}
 
@@ -116,6 +125,7 @@ func (p DiffPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, err
 	// Dispatch to each detected plugin's Plan method and merge results.
 	result := planWithPlugins(ctx, detected, impact, explain, discovery.projects, root, cacheReadOnly)
 	applyPlanMetadata(&result, fingerprint, fingerprintErr, PlanSourceDiscovery, recipeNote)
+	result.DetectedPlugins = detectedNames
 	return result, nil
 }
 
@@ -176,6 +186,7 @@ type discoveryInputs struct {
 	dependencyUnknown bool
 	codeExtensions    map[string]struct{}
 	globalFiles       map[string]struct{}
+	fingerprintFiles  map[string]struct{}
 }
 
 func discoverInputsWithPlugins(ctx context.Context, repoRoot string, plugins []LanguagePlugin) discoveryInputs {
@@ -197,6 +208,7 @@ func discoverInputsWithPlugins(ctx context.Context, repoRoot string, plugins []L
 
 	codeExts := make(map[string]struct{})
 	globalFiles := make(map[string]struct{})
+	fpFiles := make(map[string]struct{})
 	var allProjects []project
 	dependencyUnknown := false
 
@@ -221,6 +233,9 @@ func discoverInputsWithPlugins(ctx context.Context, repoRoot string, plugins []L
 				found[gf] = struct{}{}
 			}
 		}
+		for _, ff := range result.FingerprintFiles {
+			fpFiles[ff] = struct{}{}
+		}
 	}
 
 	return discoveryInputs{
@@ -229,6 +244,7 @@ func discoverInputsWithPlugins(ctx context.Context, repoRoot string, plugins []L
 		dependencyUnknown: dependencyUnknown,
 		codeExtensions:    codeExts,
 		globalFiles:       globalFiles,
+		fingerprintFiles:  fpFiles,
 	}
 }
 
@@ -489,7 +505,7 @@ func parseGoWork(path string) ([]string, error) {
 	return uniqueStrings(modules), nil
 }
 
-func computeRepoFingerprint(repoRoot string) (string, error) {
+func computeRepoFingerprint(repoRoot string, extraNames map[string]struct{}) (string, error) {
 	names := []string{
 		"go.mod",
 		"go.sum",
@@ -514,8 +530,11 @@ func computeRepoFingerprint(repoRoot string) (string, error) {
 		"ci.ai.yaml",
 	}
 
-	nameSet := make(map[string]struct{}, len(names))
+	nameSet := make(map[string]struct{}, len(names)+len(extraNames))
 	for _, name := range names {
+		nameSet[name] = struct{}{}
+	}
+	for name := range extraNames {
 		nameSet[name] = struct{}{}
 	}
 

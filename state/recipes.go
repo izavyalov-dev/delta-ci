@@ -10,16 +10,17 @@ import (
 )
 
 type RunPlan struct {
-	RunID         string
-	RepoID        string
-	Fingerprint   string
-	RecipeID      *string
-	RecipeSource  string
-	RecipeVersion *int
-	Explain       string
-	SkippedJobs   []SkippedJob
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	RunID           string
+	RepoID          string
+	Fingerprint     string
+	RecipeID        *string
+	RecipeSource    string
+	RecipeVersion   *int
+	Explain         string
+	SkippedJobs     []SkippedJob
+	DetectedPlugins []string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type RecipeRecord struct {
@@ -70,9 +71,18 @@ func (s *Store) RecordRunPlan(ctx context.Context, plan RunPlan) error {
 		skippedJobs = encoded
 	}
 
+	var detectedPlugins []byte
+	if len(plan.DetectedPlugins) > 0 {
+		encoded, err := json.Marshal(plan.DetectedPlugins)
+		if err != nil {
+			return err
+		}
+		detectedPlugins = encoded
+	}
+
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO run_plans (run_id, repo_id, fingerprint, recipe_id, recipe_source, recipe_version, explain, skipped_jobs)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO run_plans (run_id, repo_id, fingerprint, recipe_id, recipe_source, recipe_version, explain, skipped_jobs, detected_plugins)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (run_id)
 DO UPDATE SET repo_id = EXCLUDED.repo_id,
               fingerprint = EXCLUDED.fingerprint,
@@ -81,8 +91,9 @@ DO UPDATE SET repo_id = EXCLUDED.repo_id,
               recipe_version = EXCLUDED.recipe_version,
               explain = EXCLUDED.explain,
               skipped_jobs = EXCLUDED.skipped_jobs,
+              detected_plugins = EXCLUDED.detected_plugins,
               updated_at = NOW()
-`, plan.RunID, plan.RepoID, fingerprint, recipeID, plan.RecipeSource, recipeVersion, explain, skippedJobs)
+`, plan.RunID, plan.RepoID, fingerprint, recipeID, plan.RecipeSource, recipeVersion, explain, skippedJobs, detectedPlugins)
 	return err
 }
 
@@ -92,7 +103,7 @@ func (s *Store) GetRunPlan(ctx context.Context, runID string) (RunPlan, error) {
 	}
 
 	row := s.db.QueryRowContext(ctx, `
-SELECT run_id, repo_id, fingerprint, recipe_id, recipe_source, recipe_version, explain, skipped_jobs, created_at, updated_at
+SELECT run_id, repo_id, fingerprint, recipe_id, recipe_source, recipe_version, explain, skipped_jobs, detected_plugins, created_at, updated_at
 FROM run_plans
 WHERE run_id = $1
 `, runID)
@@ -103,7 +114,8 @@ WHERE run_id = $1
 	var recipeVersion sql.NullInt64
 	var explain sql.NullString
 	var skippedJobs []byte
-	if err := row.Scan(&plan.RunID, &plan.RepoID, &fingerprint, &recipeID, &plan.RecipeSource, &recipeVersion, &explain, &skippedJobs, &plan.CreatedAt, &plan.UpdatedAt); err != nil {
+	var detectedPlugins []byte
+	if err := row.Scan(&plan.RunID, &plan.RepoID, &fingerprint, &recipeID, &plan.RecipeSource, &recipeVersion, &explain, &skippedJobs, &detectedPlugins, &plan.CreatedAt, &plan.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return RunPlan{}, fmt.Errorf("%w: run plan %s", ErrNotFound, runID)
 		}
@@ -124,6 +136,11 @@ WHERE run_id = $1
 	}
 	if len(skippedJobs) > 0 {
 		if err := json.Unmarshal(skippedJobs, &plan.SkippedJobs); err != nil {
+			return RunPlan{}, err
+		}
+	}
+	if len(detectedPlugins) > 0 {
+		if err := json.Unmarshal(detectedPlugins, &plan.DetectedPlugins); err != nil {
 			return RunPlan{}, err
 		}
 	}

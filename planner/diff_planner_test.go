@@ -274,19 +274,64 @@ func TestComputeRepoFingerprintChanges(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.22\n")
 	writeFile(t, filepath.Join(dir, "go.sum"), "example.com/root v0.0.0-00010101000000-000000000000 h1:deadbeef\n")
 
-	fingerprintA, err := computeRepoFingerprint(dir)
+	fingerprintA, err := computeRepoFingerprint(dir, nil)
 	if err != nil {
 		t.Fatalf("fingerprint: %v", err)
 	}
 
 	writeFile(t, filepath.Join(dir, "go.sum"), "example.com/root v0.0.0-00010101000000-000000000000 h1:cafebabe\n")
-	fingerprintB, err := computeRepoFingerprint(dir)
+	fingerprintB, err := computeRepoFingerprint(dir, nil)
 	if err != nil {
 		t.Fatalf("fingerprint after update: %v", err)
 	}
 
 	if fingerprintA == fingerprintB {
 		t.Fatalf("expected fingerprint to change")
+	}
+}
+
+func TestComputeRepoFingerprintWithPluginFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/root\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"hello\"\nversion = \"0.1.0\"\n")
+
+	// Without Cargo.toml in extras, fingerprint includes it via hardcoded list.
+	fpBase, err := computeRepoFingerprint(dir, nil)
+	if err != nil {
+		t.Fatalf("fingerprint base: %v", err)
+	}
+
+	// With Cargo.toml in extras, same content should produce the same fingerprint
+	// since Cargo.toml is already in the hardcoded list.
+	extras := map[string]struct{}{"Cargo.toml": {}}
+	fpSame, err := computeRepoFingerprint(dir, extras)
+	if err != nil {
+		t.Fatalf("fingerprint with extra (same): %v", err)
+	}
+	if fpBase != fpSame {
+		t.Fatalf("expected same fingerprint when extra duplicates hardcoded file")
+	}
+
+	// Add a plugin-specific file not in the hardcoded list.
+	writeFile(t, filepath.Join(dir, "Cargo.lock"), "lock-v1\n")
+	extras["Cargo.lock"] = struct{}{}
+
+	fpWithLock, err := computeRepoFingerprint(dir, extras)
+	if err != nil {
+		t.Fatalf("fingerprint with Cargo.lock: %v", err)
+	}
+	if fpBase == fpWithLock {
+		t.Fatalf("expected fingerprint to change when Cargo.lock is included via extras")
+	}
+
+	// Modify Cargo.toml and verify the fingerprint changes.
+	writeFile(t, filepath.Join(dir, "Cargo.toml"), "[package]\nname = \"hello\"\nversion = \"0.2.0\"\n")
+	fpModified, err := computeRepoFingerprint(dir, extras)
+	if err != nil {
+		t.Fatalf("fingerprint after modify: %v", err)
+	}
+	if fpWithLock == fpModified {
+		t.Fatalf("expected fingerprint to change when Cargo.toml is modified")
 	}
 }
 

@@ -27,6 +27,7 @@
     <h3>Plan</h3>
     <table>
         <tr><td>Source</td><td>{{.Details.Plan.RecipeSource}}</td></tr>
+        {{if .Details.Plan.DetectedPlugins}}<tr><td>Languages</td><td>{{joinStrings .Details.Plan.DetectedPlugins ", "}}</td></tr>{{end}}
         {{if .Details.Plan.Fingerprint}}<tr><td>Fingerprint</td><td class="mono">{{.Details.Plan.Fingerprint}}</td></tr>{{end}}
         {{if .Details.Plan.Explain}}<tr><td>Explanation</td><td class="wrap">{{.Details.Plan.Explain}}</td></tr>{{end}}
     </table>

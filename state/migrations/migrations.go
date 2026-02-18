@@ -59,6 +59,9 @@ var listIndexes string
 //go:embed 0017_dead_letter.sql
 var deadLetter string
 
+//go:embed 0018_detected_plugins.sql
+var detectedPlugins string
+
 // All lists migrations in application order.
 var All = []Migration{
 	{ID: "0001_initial", Script: initial},
@@ -78,4 +81,5 @@ var All = []Migration{
 	{ID: "0015_fix_suggestions", Script: fixSuggestions},
 	{ID: "0016_list_indexes", Script: listIndexes},
 	{ID: "0017_dead_letter", Script: deadLetter},
+	{ID: "0018_detected_plugins", Script: detectedPlugins},
 }

@@ -28,6 +28,7 @@ func newTemplateRegistry(fsys fs.FS) *templateRegistry {
 		"isActiveRun":          isActiveRun,
 		"safeArtifactURI":      safeArtifactURI,
 		"failureCategoryLabel": failureCategoryLabel,
+		"joinStrings":          strings.Join,
 	}
 
 	reg := &templateRegistry{

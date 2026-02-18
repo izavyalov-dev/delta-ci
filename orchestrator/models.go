@@ -41,12 +41,13 @@ type JobDetail struct {
 
 // RunPlanDetail provides plan explainability metadata for APIs.
 type RunPlanDetail struct {
-	RecipeSource  string             `json:"recipe_source"`
-	RecipeID      *string            `json:"recipe_id,omitempty"`
-	RecipeVersion *int               `json:"recipe_version,omitempty"`
-	Fingerprint   string             `json:"fingerprint,omitempty"`
-	Explain       string             `json:"explain,omitempty"`
-	SkippedJobs   []state.SkippedJob `json:"skipped_jobs"`
+	RecipeSource    string             `json:"recipe_source"`
+	RecipeID        *string            `json:"recipe_id,omitempty"`
+	RecipeVersion   *int               `json:"recipe_version,omitempty"`
+	Fingerprint     string             `json:"fingerprint,omitempty"`
+	Explain         string             `json:"explain,omitempty"`
+	SkippedJobs     []state.SkippedJob `json:"skipped_jobs"`
+	DetectedPlugins []string           `json:"detected_plugins,omitempty"`
 }
 
 // RunFilter describes filtering and pagination for run list queries.

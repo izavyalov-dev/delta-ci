@@ -401,11 +401,12 @@ func (s *Service) recordRunPlan(ctx context.Context, run state.Run, plan planner
 	}
 
 	record := state.RunPlan{
-		RunID:        run.ID,
-		RepoID:       run.RepoID,
-		Fingerprint:  plan.Fingerprint,
-		RecipeSource: source,
-		Explain:      plan.Explain,
+		RunID:           run.ID,
+		RepoID:          run.RepoID,
+		Fingerprint:     plan.Fingerprint,
+		RecipeSource:    source,
+		Explain:         plan.Explain,
+		DetectedPlugins: plan.DetectedPlugins,
 	}
 	if len(plan.SkippedJobs) > 0 {
 		record.SkippedJobs = make([]state.SkippedJob, 0, len(plan.SkippedJobs))
@@ -478,12 +479,13 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 			skipped = []state.SkippedJob{}
 		}
 		planDetail = &RunPlanDetail{
-			RecipeSource:  plan.RecipeSource,
-			RecipeID:      plan.RecipeID,
-			RecipeVersion: plan.RecipeVersion,
-			Fingerprint:   plan.Fingerprint,
-			Explain:       plan.Explain,
-			SkippedJobs:   skipped,
+			RecipeSource:    plan.RecipeSource,
+			RecipeID:        plan.RecipeID,
+			RecipeVersion:   plan.RecipeVersion,
+			Fingerprint:     plan.Fingerprint,
+			Explain:         plan.Explain,
+			SkippedJobs:     skipped,
+			DetectedPlugins: plan.DetectedPlugins,
 		}
 	}
 
@@ -1222,12 +1224,13 @@ func (s *Service) updateRunPlanRecipe(ctx context.Context, run state.Run, plan s
 		return nil
 	}
 	record := state.RunPlan{
-		RunID:        run.ID,
-		RepoID:       run.RepoID,
-		Fingerprint:  plan.Fingerprint,
-		RecipeSource: plan.RecipeSource,
-		Explain:      plan.Explain,
-		SkippedJobs:  plan.SkippedJobs,
+		RunID:           run.ID,
+		RepoID:          run.RepoID,
+		Fingerprint:     plan.Fingerprint,
+		RecipeSource:    plan.RecipeSource,
+		Explain:         plan.Explain,
+		SkippedJobs:     plan.SkippedJobs,
+		DetectedPlugins: plan.DetectedPlugins,
 	}
 	record.RecipeID = &recipeID
 	if version > 0 {
