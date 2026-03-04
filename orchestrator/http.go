@@ -202,6 +202,35 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 		})
 	})
 
+	mux.HandleFunc("/api/v1/runs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			RepoID    string `json:"repo_id"`
+			Ref       string `json:"ref"`
+			CommitSHA string `json:"commit_sha"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		details, err := service.CreateRun(r.Context(), CreateRunRequest{
+			RepoID:    req.RepoID,
+			Ref:       normalizeRef(req.Ref),
+			CommitSHA: req.CommitSHA,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{
+			"run_id": details.Run.ID,
+			"state":  string(details.Run.State),
+		})
+	})
+
 	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
 		runID, action, ok := parseRunPath(r.URL.Path)
 		if !ok {
@@ -368,6 +397,15 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, config HTTPConfig) ht
 	})
 
 	return mux
+}
+
+// normalizeRef ensures ref is a fully-qualified git ref.
+// Bare branch names (no "/") are prefixed with "refs/heads/".
+func normalizeRef(ref string) string {
+	if !strings.Contains(ref, "/") {
+		return "refs/heads/" + ref
+	}
+	return ref
 }
 
 func readBody(r *http.Request, maxBytes int64) ([]byte, error) {

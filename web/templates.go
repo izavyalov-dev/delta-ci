@@ -64,6 +64,9 @@ func newTemplateRegistry(fsys fs.FS) *templateRegistry {
 		"settings": {
 			path: "templates/pages/settings.html",
 		},
+		"new_run": {
+			path: "templates/pages/new_run.html",
+		},
 	}
 
 	fragments := map[string]string{

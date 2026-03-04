@@ -79,6 +79,7 @@ func (h *handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		RecentRuns: toRunSummaries(recentRuns),
 		FailedRuns: toRunSummaries(failedRuns),
 		CSRFToken:  csrfToken,
+		CSPNonce:   nonceFromRequest(r),
 	}
 
 	if h.isHTMX(r) {
@@ -151,6 +152,7 @@ func (h *handler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		Page:       page,
 		TotalPages: totalPages,
 		CSRFToken:  csrfToken,
+		CSPNonce:   nonceFromRequest(r),
 	}
 
 	if h.isHTMX(r) {
@@ -217,6 +219,7 @@ func (h *handler) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 		Details:   details,
 		IsActive:  active,
 		CSRFToken: csrfToken,
+		CSPNonce:  nonceFromRequest(r),
 	}
 
 	html, err := h.tmpl.renderPage("run_detail", data)
@@ -279,6 +282,82 @@ func (h *handler) handleRunAction(w http.ResponseWriter, r *http.Request, runID,
 	}
 }
 
+// handleNewRun renders and handles the new run form (GET/POST /runs/new).
+func (h *handler) handleNewRun(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	csrfToken := setCSRFCookie(w, r)
+
+	if r.Method == http.MethodPost {
+		if !validateCSRF(r) {
+			h.writeHTML(w, http.StatusForbidden, "<p>CSRF validation failed. Please refresh and try again.</p>")
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			h.renderError(w, http.StatusBadRequest, err)
+			return
+		}
+		repoID := strings.TrimSpace(r.FormValue("repo_id"))
+		ref := strings.TrimSpace(r.FormValue("ref"))
+		commitSHA := strings.TrimSpace(r.FormValue("commit_sha"))
+
+		if ref != "" && !strings.Contains(ref, "/") {
+			ref = "refs/heads/" + ref
+		}
+
+		details, err := h.service.CreateRun(ctx, orchestrator.CreateRunRequest{
+			RepoID:    repoID,
+			Ref:       ref,
+			CommitSHA: commitSHA,
+		})
+		if err != nil {
+			repos, _ := h.service.ListDistinctRepos(ctx)
+			data := NewRunData{
+				Repos:     repos,
+				CSRFToken: csrfToken,
+				CSPNonce:  nonceFromRequest(r),
+				Flash: &FlashMessage{
+					Type:    "error",
+					Message: err.Error(),
+				},
+			}
+			html, renderErr := h.tmpl.renderPage("new_run", data)
+			if renderErr != nil {
+				h.renderError(w, http.StatusInternalServerError, renderErr)
+				return
+			}
+			h.writeHTML(w, http.StatusUnprocessableEntity, html)
+			return
+		}
+
+		http.Redirect(w, r, "/runs/"+details.Run.ID, http.StatusSeeOther)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	repos, err := h.service.ListDistinctRepos(ctx)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	data := NewRunData{
+		Repos:     repos,
+		CSRFToken: csrfToken,
+		CSPNonce:  nonceFromRequest(r),
+	}
+
+	html, err := h.tmpl.renderPage("new_run", data)
+	if err != nil {
+		h.renderError(w, http.StatusInternalServerError, err)
+		return
+	}
+	h.writeHTML(w, http.StatusOK, html)
+}
+
 // handleSettings renders the settings page (GET /settings).
 func (h *handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -287,7 +366,8 @@ func (h *handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := SettingsData{
-		Version: "Phase 5",
+		Version:  "Phase 5",
+		CSPNonce: nonceFromRequest(r),
 	}
 
 	html, err := h.tmpl.renderPage("settings", data)

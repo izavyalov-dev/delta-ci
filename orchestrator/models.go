@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"time"
 
+	"github.com/izavyalov-dev/delta-ci/protocol"
 	"github.com/izavyalov-dev/delta-ci/state"
 )
 
@@ -32,6 +33,7 @@ type RunDetails struct {
 // JobDetail presents a job alongside its attempts.
 type JobDetail struct {
 	Job                   state.Job                    `json:"job"`
+	Spec                  *protocol.JobSpec            `json:"spec,omitempty"`
 	Attempts              []state.JobAttempt           `json:"attempts"`
 	Artifacts             []state.Artifact             `json:"artifacts"`
 	FailureExplanations   []state.FailureExplanation   `json:"failure_explanations"`

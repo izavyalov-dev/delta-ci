@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/izavyalov-dev/delta-ci/internal/observability"
@@ -32,6 +33,18 @@ type Service struct {
 	analyzer   FailureAnalyzer
 	logger     *slog.Logger
 	metrics    *observability.Metrics
+	gitBaseURL string
+	gitToken   string
+}
+
+// WithGitConfig sets the base URL and optional token used to build clone URLs
+// for leases. baseURL defaults to "https://github.com" if empty.
+func (s *Service) WithGitConfig(baseURL, token string) *Service {
+	if baseURL != "" {
+		s.gitBaseURL = baseURL
+	}
+	s.gitToken = token
+	return s
 }
 
 type plannedJobRecord struct {
@@ -514,8 +527,17 @@ func (s *Service) GetRunDetails(ctx context.Context, runID string) (RunDetails, 
 			return RunDetails{}, err
 		}
 
+		var jobSpec *protocol.JobSpec
+		if specJSON, err := s.store.GetJobSpec(ctx, job.ID); err == nil {
+			var spec protocol.JobSpec
+			if json.Unmarshal(specJSON, &spec) == nil {
+				jobSpec = &spec
+			}
+		}
+
 		jobDetails = append(jobDetails, JobDetail{
 			Job:                   job,
+			Spec:                  jobSpec,
 			Attempts:              attempts,
 			Artifacts:             artifacts,
 			FailureExplanations:   failureExplanations,
@@ -623,8 +645,28 @@ func (s *Service) GrantLease(ctx context.Context, req GrantLeaseRequest) (protoc
 		LeaseTTLSeconds:          lease.TTLSeconds,
 		HeartbeatIntervalSeconds: lease.HeartbeatIntervalSeconds,
 		MaxRuntimeSeconds:        req.MaxRuntimeSeconds,
+		CloneURL:                 buildCloneURL(s.gitBaseURL, s.gitToken, run.RepoID),
+		CommitSHA:                run.CommitSHA,
 		JobSpec:                  spec,
 	}, nil
+}
+
+// buildCloneURL derives an HTTPS clone URL from a repo ID of the form "owner/repo".
+// If token is provided it is embedded for authenticated access.
+// Returns "" if repoID does not look like owner/repo.
+func buildCloneURL(baseURL, token, repoID string) string {
+	if !strings.Contains(repoID, "/") || strings.Contains(repoID, "://") {
+		return ""
+	}
+	if baseURL == "" {
+		baseURL = "https://github.com"
+	}
+	base := strings.TrimRight(baseURL, "/")
+	if token != "" && strings.HasPrefix(base, "https://") {
+		host := strings.TrimPrefix(base, "https://")
+		return "https://x-access-token:" + token + "@" + host + "/" + repoID + ".git"
+	}
+	return base + "/" + repoID + ".git"
 }
 
 // DequeueJobAttempt pulls the next available job attempt from the queue.

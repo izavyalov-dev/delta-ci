@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -93,12 +94,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	cacheUsages, cacheEvents := restoreCaches(*cacheDir, runWorkdir, lease.JobSpec.Caches, logger)
+	// Clone the repo if a clone URL is provided.
+	jobWorkdir := runWorkdir
+	if lease.CloneURL != "" {
+		cloned, err := cloneRepo(runCtx, lease.CloneURL, lease.CommitSHA, runWorkdir, lease.JobID, logWriter, logger)
+		if err != nil {
+			fmt.Fprintf(logWriter, "\nERROR: git clone failed: %v\n", err)
+			logger.Error("git clone failed", "event", "clone_failed", "error", err)
+		} else {
+			jobWorkdir = cloned
+			logger.Info("repo cloned", "event", "repo_cloned", "dir", cloned)
+		}
+	}
+
+	// Apply the job's sub-directory within the repo.
+	execDir := jobWorkdir
+	if d := lease.JobSpec.Workdir; d != "" && d != "." {
+		execDir = filepath.Join(jobWorkdir, d)
+	}
+
+	cacheUsages, cacheEvents := restoreCaches(*cacheDir, execDir, lease.JobSpec.Caches, logger)
 
 	cmd := exec.CommandContext(runCtx, "sh", "-c", firstStep(lease.JobSpec.Steps))
-	cmd.Dir = runWorkdir
+	cmd.Dir = execDir
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
+	cmd.Env = buildEnv(lease.JobSpec.Env)
 
 	heartbeatInterval := time.Duration(lease.HeartbeatIntervalSeconds) * time.Second
 	if heartbeatInterval <= 0 {
@@ -453,6 +474,42 @@ func firstStep(steps []string) string {
 		return "echo \"no steps provided\""
 	}
 	return steps[0]
+}
+
+// cloneRepo clones cloneURL into baseDir/repo-{jobID} and checks out commitSHA.
+// Using jobID as a suffix avoids collisions when multiple jobs run concurrently.
+// Returns the path to the cloned directory.
+func cloneRepo(ctx context.Context, cloneURL, commitSHA, baseDir, jobID string, logWriter io.Writer, logger *slog.Logger) (string, error) {
+	repoDir := filepath.Join(baseDir, "repo-"+jobID)
+
+	clone := exec.CommandContext(ctx, "git", "clone", "--no-checkout", cloneURL, repoDir)
+	clone.Stdout = logWriter
+	clone.Stderr = logWriter
+	if err := clone.Run(); err != nil {
+		return "", fmt.Errorf("git clone: %w", err)
+	}
+
+	if commitSHA != "" {
+		checkout := exec.CommandContext(ctx, "git", "checkout", commitSHA)
+		checkout.Dir = repoDir
+		checkout.Stdout = logWriter
+		checkout.Stderr = logWriter
+		if err := checkout.Run(); err != nil {
+			return "", fmt.Errorf("git checkout %s: %w", commitSHA, err)
+		}
+	}
+
+	logger.Info("repo checked out", "event", "repo_checked_out", "commit_sha", commitSHA)
+	return repoDir, nil
+}
+
+// buildEnv merges the current process environment with job-specific overrides.
+func buildEnv(specEnv map[string]string) []string {
+	env := os.Environ()
+	for k, v := range specEnv {
+		env = append(env, k+"="+v)
+	}
+	return env
 }
 
 func exitCode(err error) int {

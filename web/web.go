@@ -52,6 +52,7 @@ func NewHandler(service *orchestrator.Service, logger *slog.Logger, config Confi
 	// Pages
 	mux.HandleFunc("/", h.handleDashboard)
 	mux.HandleFunc("/runs", h.handleRuns)
+	mux.HandleFunc("/runs/new", h.handleNewRun)
 	mux.HandleFunc("/runs/", h.handleRunDetail)
 	mux.HandleFunc("/settings", h.handleSettings)
 

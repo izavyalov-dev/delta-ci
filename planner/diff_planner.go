@@ -36,7 +36,12 @@ func NewDiffPlanner(repoRoot string, fallback Planner, recipes RecipeStore, plug
 		fallback = StaticPlanner{}
 	}
 	if plugins == nil {
-		plugins = NewPluginRegistry(GoLanguagePlugin{})
+		plugins = NewPluginRegistry(
+			GoLanguagePlugin{},
+			NodeLanguagePlugin{},
+			PythonLanguagePlugin{},
+			DotNetLanguagePlugin{},
+		)
 	}
 	return DiffPlanner{
 		RepoRoot: repoRoot,

@@ -59,10 +59,6 @@ type StaticPlanner struct {
 	Jobs []PlannedJob
 }
 
-func defaultLintCommand() string {
-	return "go vet ./..."
-}
-
 func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, error) {
 	if len(p.Jobs) > 0 {
 		return PlanResult{
@@ -71,9 +67,10 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 		}, nil
 	}
 
-	// Default to a single required "build" job during early bootstrap.
+	// Polyglot fallback: auto-detect language at runner time and run appropriate commands.
 	return PlanResult{
-		Explain: "static planner default (no diff analysis available)",
+		Explain:      "polyglot fallback (no diff analysis available; language detected at runtime)",
+		RecipeSource: PlanSourceFallback,
 		Jobs: []PlannedJob{
 			{
 				Name:     "build",
@@ -81,9 +78,9 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 				Spec: protocol.JobSpec{
 					Name:    "build",
 					Workdir: ".",
-					Steps:   []string{"go build ./..."},
+					Steps:   []string{polyglotBuildStep()},
 				},
-				Reason: "default build job",
+				Reason: "fallback build job (auto-detect language)",
 			},
 			{
 				Name:     "test",
@@ -91,9 +88,10 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 				Spec: protocol.JobSpec{
 					Name:    "test",
 					Workdir: ".",
-					Steps:   []string{"go test ./..."},
+					Steps:   []string{polyglotTestStep()},
 				},
-				Reason: "default test job",
+				Reason:    "fallback test job (auto-detect language)",
+				DependsOn: []string{"build"},
 			},
 			{
 				Name:     "lint",
@@ -101,10 +99,58 @@ func (p StaticPlanner) Plan(ctx context.Context, req PlanRequest) (PlanResult, e
 				Spec: protocol.JobSpec{
 					Name:    "lint",
 					Workdir: ".",
-					Steps:   []string{defaultLintCommand()},
+					Steps:   []string{polyglotLintStep()},
 				},
-				Reason: "default lint job",
+				Reason:    "fallback lint job (auto-detect language)",
+				DependsOn: []string{"build"},
 			},
 		},
 	}, nil
+}
+
+// polyglotBuildStep returns a shell script that detects the project language and runs
+// the appropriate build/install command. Used as a fallback when the planner cannot
+// inspect the repository at plan time (e.g. manually-triggered remote runs).
+func polyglotBuildStep() string {
+	return `set -e
+if [ -f go.mod ]; then
+  go build ./...
+elif [ -f package.json ]; then
+  npm install && npm run build --if-present
+elif [ -f requirements.txt ]; then
+  pip install -r requirements.txt
+elif [ -f pyproject.toml ]; then
+  pip install -e .
+elif find . -maxdepth 3 -name "*.sln" -o -name "*.csproj" 2>/dev/null | grep -q .; then
+  dotnet build
+else
+  echo "No recognized build system detected" && exit 1
+fi`
+}
+
+func polyglotTestStep() string {
+	return `set -e
+if [ -f go.mod ]; then
+  go test ./...
+elif [ -f package.json ]; then
+  npm run test --if-present
+elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+  python -m pytest --tb=short 2>/dev/null || python -m unittest discover
+elif find . -maxdepth 3 -name "*.sln" -o -name "*.csproj" 2>/dev/null | grep -q .; then
+  dotnet test
+else
+  echo "No recognized test framework detected" && exit 1
+fi`
+}
+
+func polyglotLintStep() string {
+	return `if [ -f go.mod ]; then
+  go vet ./...
+elif [ -f package.json ]; then
+  npm run lint --if-present
+elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+  python -m ruff check . 2>/dev/null || python -m flake8 . 2>/dev/null || true
+elif find . -maxdepth 3 -name "*.sln" -o -name "*.csproj" 2>/dev/null | grep -q .; then
+  dotnet format --verify-no-changes 2>/dev/null || true
+fi`
 }

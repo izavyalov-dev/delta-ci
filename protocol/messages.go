@@ -26,6 +26,8 @@ type LeaseGranted struct {
 	LeaseTTLSeconds          int     `json:"lease_ttl_seconds"`
 	HeartbeatIntervalSeconds int     `json:"heartbeat_interval_seconds"`
 	MaxRuntimeSeconds        int     `json:"max_runtime_seconds,omitempty"`
+	CloneURL                 string  `json:"clone_url,omitempty"`
+	CommitSHA                string  `json:"commit_sha,omitempty"`
 	JobSpec                  JobSpec `json:"job_spec"`
 }
 

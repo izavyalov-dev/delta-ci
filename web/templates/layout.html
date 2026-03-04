@@ -20,8 +20,8 @@
     <footer>
         <small>Delta CI — diff-aware, AI-assisted CI</small>
     </footer>
-    <script src="/static/js/htmx.min.js" nonce=""></script>
-    <script nonce="">
+    <script src="/static/js/htmx.min.js" nonce="{{.CSPNonce}}"></script>
+    <script nonce="{{.CSPNonce}}">
         document.body.addEventListener('htmx:configRequest', function(event) {
             var csrf = document.cookie.replace(/(?:(?:^|.*;\s*)csrf_token\s*=\s*([^;]*).*$)|^.*$/, "$1");
             if (csrf) {

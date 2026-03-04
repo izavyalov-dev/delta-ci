@@ -1,0 +1,20 @@
+{{define "content"}}<h2>New Run</h2>
+<form method="post" action="/runs/new">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <label>
+        Repository ID
+        <input type="text" name="repo_id" list="repos-list" placeholder="my-repo" required>
+        <datalist id="repos-list">
+            {{range .Repos}}<option value="{{.}}">{{end}}
+        </datalist>
+    </label>
+    <label>
+        Ref
+        <input type="text" name="ref" placeholder="refs/heads/main">
+    </label>
+    <label>
+        Commit SHA
+        <input type="text" name="commit_sha" placeholder="HEAD commit SHA" required>
+    </label>
+    <button type="submit">Trigger Run</button>
+</form>{{end}}

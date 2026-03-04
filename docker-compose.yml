@@ -19,6 +19,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.orchestrator
+      target: serve
     command: ["serve", "--listen", ":8080"]
     environment:
       DATABASE_URL: "postgres://delta:delta@postgres:5432/delta_ci?sslmode=disable"
@@ -32,6 +33,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.orchestrator
+      target: worker
     command: ["worker", "--orchestrator-url", "http://orchestrator-serve:8080", "--runner-cmd", "/usr/local/bin/runner"]
     environment:
       DATABASE_URL: "postgres://delta:delta@postgres:5432/delta_ci?sslmode=disable"

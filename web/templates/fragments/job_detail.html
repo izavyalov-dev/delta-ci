@@ -3,7 +3,15 @@
     <tr><td>State</td><td>{{template "jobBadge" .Job.State}}</td></tr>
     <tr><td>Attempts</td><td>{{.Job.AttemptCount}}</td></tr>
     {{if .Job.Reason}}<tr><td>Reason</td><td class="wrap">{{.Job.Reason}}</td></tr>{{end}}
+    {{if .Spec}}
+    {{if .Spec.Workdir}}<tr><td>Workdir</td><td class="mono">{{.Spec.Workdir}}</td></tr>{{end}}
+    {{end}}
 </table>
+
+{{if .Spec}}{{if .Spec.Steps}}<h4>Steps</h4>
+<ol class="steps-list">
+{{range .Spec.Steps}}<li><pre class="step-cmd">{{.}}</pre></li>{{end}}
+</ol>{{end}}{{end}}
 
 {{if .Attempts}}<h4>Attempts</h4>
 <table>

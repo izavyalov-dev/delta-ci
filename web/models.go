@@ -43,6 +43,7 @@ type DashboardData struct {
 	RecentRuns []RunSummary
 	FailedRuns []RunSummary
 	CSRFToken  string
+	CSPNonce   string
 	Flash      *FlashMessage
 }
 
@@ -55,6 +56,7 @@ type RunsPageData struct {
 	Page       int
 	TotalPages int
 	CSRFToken  string
+	CSPNonce   string
 	Flash      *FlashMessage
 }
 
@@ -63,13 +65,23 @@ type RunDetailData struct {
 	Details   orchestrator.RunDetails
 	IsActive  bool
 	CSRFToken string
+	CSPNonce  string
 	Flash     *FlashMessage
 }
 
 // SettingsData is the view model for the settings page.
 type SettingsData struct {
-	Version string
-	Flash   *FlashMessage
+	Version  string
+	CSPNonce string
+	Flash    *FlashMessage
+}
+
+// NewRunData is the view model for the new run form.
+type NewRunData struct {
+	Repos     []string
+	CSRFToken string
+	CSPNonce  string
+	Flash     *FlashMessage
 }
 
 // FlashMessage represents a transient user notification.

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -56,6 +58,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "worker failed: %v\n", err)
 			os.Exit(1)
 		}
+	case "trigger":
+		if err := runTrigger(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "trigger failed: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		usage()
 		os.Exit(1)
@@ -63,7 +70,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("Usage: orchestrator <serve|dogfood|worker> [flags]")
+	fmt.Println("Usage: orchestrator <serve|dogfood|worker|trigger> [flags]")
 }
 
 // stringSliceFlag implements flag.Value for repeatable string flags.
@@ -221,6 +228,13 @@ func buildReporter(store *state.Store, ghReporter orchestrator.StatusReporter, n
 	return multi
 }
 
+func envOrDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
+
 func envBool(name string) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -269,6 +283,7 @@ func runServe(args []string) error {
 	githubAppPrivateKeyFile := flags.String("github-app-private-key-file", os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubAPIURL := flags.String("github-api-url", os.Getenv("GITHUB_API_URL"), "GitHub API base URL")
 	githubCheckName := flags.String("github-check-name", os.Getenv("GITHUB_CHECK_NAME"), "GitHub check run name")
+	gitBaseURL := flags.String("git-base-url", envOrDefault("DELTA_GIT_BASE_URL", "https://github.com"), "Base URL for git clone (e.g. https://github.com)")
 	webEnabled := flags.Bool("web-enabled", !envBool("DELTA_WEB_DISABLED"), "Enable web dashboard")
 	webDev := flags.Bool("web-dev", envBool("DELTA_WEB_DEV"), "Serve templates from disk for hot-reload")
 	pprofEnabled := flags.Bool("pprof-enabled", false, "Enable pprof profiling endpoints")
@@ -320,6 +335,7 @@ func runServe(args []string) error {
 	registry := buildPluginRegistry(langPlugins)
 	plan := planner.NewDiffPlanner("", planner.StaticPlanner{}, orchestrator.NewRecipeStore(store), registry)
 	service := orchestrator.NewService(store, plan, orchestrator.NewQueueDispatcher(store), nil, reporter, analyzer)
+	service.WithGitConfig(*gitBaseURL, *githubToken)
 	apiHandler := orchestrator.NewHTTPHandler(service, observability.NewLogger("orchestrator.http"), orchestrator.HTTPConfig{
 		GitHubWebhookSecret: *githubWebhookSecret,
 	})
@@ -492,6 +508,95 @@ func runDogfood(args []string) error {
 
 	logger.Info("dogfood run finished", "event", "run_finished", "run_id", runDetails.Run.ID)
 	return nil
+}
+
+func runTrigger(args []string) error {
+	flags := flag.NewFlagSet("trigger", flag.ExitOnError)
+	orchestratorURL := flags.String("orchestrator-url", "http://localhost:8080", "Orchestrator base URL")
+	repoID := flags.String("repo-id", "", "Repository ID (auto-detected from git remote if not set)")
+	ref := flags.String("ref", "", "Git ref (auto-detected from current branch if not set)")
+	commitSHA := flags.String("commit-sha", "", "Commit SHA (auto-detected from git HEAD if not set)")
+	_ = flags.Parse(args)
+
+	if *repoID == "" {
+		*repoID = triggerAutoDetectRepoID()
+	}
+	if *ref == "" {
+		branch := gitAutoDetect("symbolic-ref", "--short", "HEAD")
+		if branch != "" {
+			if !strings.Contains(branch, "/") {
+				branch = "refs/heads/" + branch
+			}
+			*ref = branch
+		}
+	}
+	if *commitSHA == "" {
+		*commitSHA = gitAutoDetect("rev-parse", "HEAD")
+	}
+
+	if *repoID == "" {
+		return errors.New("repo-id required (could not auto-detect from git remote)")
+	}
+	if *ref == "" {
+		return errors.New("ref required (could not auto-detect from git branch)")
+	}
+	if *commitSHA == "" {
+		return errors.New("commit-sha required (could not auto-detect from git HEAD)")
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"repo_id":    *repoID,
+		"ref":        *ref,
+		"commit_sha": *commitSHA,
+	})
+	if err != nil {
+		return err
+	}
+
+	baseURL := strings.TrimRight(*orchestratorURL, "/")
+	resp, err := http.Post(baseURL+"/api/v1/runs", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("POST %s/api/v1/runs: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		RunID string `json:"run_id"`
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+
+	fmt.Printf("run_id: %s\n", result.RunID)
+	fmt.Printf("state:  %s\n", result.State)
+	fmt.Printf("url:    %s/runs/%s\n", baseURL, result.RunID)
+	return nil
+}
+
+// gitAutoDetect runs a git command and returns trimmed stdout, or "" on error.
+func gitAutoDetect(gitArgs ...string) string {
+	out, err := exec.Command("git", gitArgs...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// triggerAutoDetectRepoID infers a repo ID from the git remote URL.
+// It takes the last path segment and strips the ".git" suffix.
+func triggerAutoDetectRepoID() string {
+	remote := gitAutoDetect("remote", "get-url", "origin")
+	if remote == "" {
+		return ""
+	}
+	base := filepath.Base(remote)
+	return strings.TrimSuffix(base, ".git")
 }
 
 func buildGitHubReporter(store *state.Store, token, appID, appInstallationID, appPrivateKey, appPrivateKeyFile, apiURL, checkName string) (orchestrator.StatusReporter, error) {

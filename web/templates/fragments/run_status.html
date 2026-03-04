@@ -45,12 +45,18 @@
 <section>
     <h3>Jobs ({{len .Details.Jobs}})</h3>
     <ul class="job-list">
-    {{range $idx, $job := .Details.Jobs}}<li class="job-item">
-        <div class="job-header" hx-get="/fragments/job-detail/{{$.Details.Run.ID}}/{{$idx}}" hx-trigger="click once" hx-target="#job-body-{{$idx}}" hx-swap="innerHTML">
-            <span>{{$job.Job.Name}} {{if $job.Job.Required}}(required){{end}}</span>
-            <span>{{template "jobBadge" $job.Job.State}}</span>
-        </div>
-        <div class="job-body" id="job-body-{{$idx}}"></div>
+    {{range $idx, $job := .Details.Jobs}}<li>
+        <details class="job-item"
+                 hx-get="/fragments/job-detail/{{$.Details.Run.ID}}/{{$idx}}"
+                 hx-trigger="toggle once"
+                 hx-target="#job-body-{{$idx}}"
+                 hx-swap="innerHTML">
+            <summary class="job-header">
+                <span class="job-title">{{$job.Job.Name}} {{if $job.Job.Required}}(required){{end}}</span>
+                <span>{{template "jobBadge" $job.Job.State}}</span>
+            </summary>
+            <div class="job-body" id="job-body-{{$idx}}"></div>
+        </details>
     </li>{{end}}
     </ul>
 </section>{{end}}
